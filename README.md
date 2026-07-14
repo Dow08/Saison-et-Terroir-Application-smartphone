@@ -1,3 +1,6 @@
+<img width="886" height="652" alt="image" src="https://github.com/user-attachments/assets/092d3b90-e000-4b87-a722-6e43d40c7bad" />
+
+
 # Saison & Terroir
 
 Application mobile de découverte d'activités locales, saison par saison.
