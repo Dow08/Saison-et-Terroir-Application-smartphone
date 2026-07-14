@@ -1,0 +1,8 @@
+{
+  "name": "Seasonal Activities Explorer",
+  "description": "A responsive full-stack app for finding local activities by season, with maps, Google reviews, comparisons, premium direct booking, real-time push notifications, and multi-language support.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

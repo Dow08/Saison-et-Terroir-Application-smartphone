@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Saison & Terroir — L'authenticité locale</title>
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#f59e0b" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="apple-touch-icon" href="/icon.svg" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+    <script>
+      if ('serviceWorker' in navigator) {
+        const isDevOrPreview = window.location.hostname.includes('run.app') || 
+                               window.location.hostname.includes('localhost') || 
+                               window.location.hostname.includes('127.0.0.1');
+        
+        if (isDevOrPreview) {
+          // Unregister any active service workers on development/preview instances
+          navigator.serviceWorker.getRegistrations().then((registrations) => {
+            for (let registration of registrations) {
+              registration.unregister().then((success) => {
+                if (success) {
+                  console.log('Unregistered active service worker for live preview stream stability.');
+                }
+              });
+            }
+          });
+        } else {
+          window.addEventListener('load', () => {
+            navigator.serviceWorker.register('/service-worker.js')
+              .then((reg) => console.log('Service Worker registered successfully!', reg.scope))
+              .catch((err) => console.warn('Service Worker registration failed:', err));
+          });
+        }
+      }
+    </script>
+  </body>
+</html>
+
