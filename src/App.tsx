@@ -34,6 +34,7 @@ import {
 } from "lucide-react";
 
 import { Language, Season, Activity, PushNotification, LOCALIZATION } from "./types";
+import { computeLocalActivities, getFallbackNewsForPage, getDefaultNotifications, FALLBACK_BUILD_INFO } from "./data/fallbackData";
 import ActivityCard from "./components/ActivityCard";
 import BiometricModal from "./components/BiometricModal";
 import PremiumModal from "./components/PremiumModal";
@@ -43,6 +44,7 @@ import PrivacyModal from "./components/PrivacyModal";
 import OnboardingModal from "./components/OnboardingModal";
 import UpdateDiagnosticsModal from "./components/UpdateDiagnosticsModal";
 import { getJulyWeather, isOutdoorCategory } from "./utils/weather";
+import { getCurrentCoords, geoErrorMessage } from "./utils/geo";
 
 export default function App() {
   const weatherData = getJulyWeather();
@@ -90,14 +92,20 @@ export default function App() {
     }
   });
 
-  // User Sync / Premium state (Initially fetched or defaulted)
-  const [userId, setUserId] = useState<string>("traveler-" + Math.floor(1000 + Math.random() * 9000));
-  const [isPremium, setIsPremium] = useState<boolean>(true);
-  const [biometricEnabled, setBiometricEnabled] = useState<boolean>(false);
+  // User state (localStorage only — no cloud sync in APK mode)
+  const [userId, setUserId] = useState<string>(() => localStorage.getItem("user_id") || "traveler-" + Math.floor(1000 + Math.random() * 9000));
+  const [isPremium, setIsPremium] = useState<boolean>(() => localStorage.getItem("is_premium") !== "false");
+  const [biometricEnabled, setBiometricEnabled] = useState<boolean>(() => localStorage.getItem("biometric_enabled") === "true");
   const [isBiometricAuthenticated, setIsBiometricAuthenticated] = useState<boolean>(false);
-  const [favorites, setFavorites] = useState<string[]>([]);
-  const [customNotes, setCustomNotes] = useState<{ [activityId: string]: string }>({});
-  const [pushNotifications, setPushNotifications] = useState<PushNotification[]>([]);
+  const [favorites, setFavorites] = useState<string[]>(() => {
+    try { const s = localStorage.getItem("favorites"); return s ? JSON.parse(s) : []; } catch { return []; }
+  });
+  const [customNotes, setCustomNotes] = useState<{ [activityId: string]: string }>(() => {
+    try { const s = localStorage.getItem("custom_notes"); return s ? JSON.parse(s) : {}; } catch { return {}; }
+  });
+  const [pushNotifications, setPushNotifications] = useState<PushNotification[]>(() => {
+    try { const s = localStorage.getItem("push_notifications"); return s ? JSON.parse(s) : getDefaultNotifications(); } catch { return getDefaultNotifications(); }
+  });
 
   // Navigation tab: "discover" | "favorites" | "agenda" | "notifications" | "settings" | "legal" | "rgpd"
   const [activeTab, setActiveTab] = useState<"discover" | "favorites" | "agenda" | "notifications" | "settings" | "legal" | "rgpd">("discover");
@@ -140,7 +148,7 @@ export default function App() {
     }
   }, [darkMode]);
 
-  // Initial trigger: Fetch default activities & setup initial cloud state
+  // Initial trigger: Load activities from local data (no server)
   useEffect(() => {
     // Only auto-fetch on mount if onboarding is already completed
     if (localStorage.getItem("onboarding_completed")) {
@@ -156,7 +164,6 @@ export default function App() {
         fetchActivities();
       }
     }
-    syncGetCloudData(userId);
   }, []);
 
   const handleOnboardingClose = (nickname: string, coords: { lat: number; lng: number } | null) => {
@@ -173,32 +180,8 @@ export default function App() {
     }
   };
 
-  // Sync cloud data helper
-  const syncGetCloudData = async (uid: string) => {
-    try {
-      const res = await fetch(`/api/sync/${uid}`);
-      if (res.ok) {
-        const text = await res.text();
-        if (text.trim().startsWith("<")) {
-          console.warn("Got HTML instead of JSON for sync data. Session may be unauthenticated.");
-          return;
-        }
-        const data = JSON.parse(text);
-        if (data) {
-          if (data.favorites) setFavorites(data.favorites);
-          setIsPremium(data.isPremium);
-          setBiometricEnabled(data.biometricEnabled);
-          if (data.pushNotifications) setPushNotifications(data.pushNotifications);
-          if (data.customNotes) setCustomNotes(data.customNotes);
-        }
-      }
-    } catch (e) {
-      console.error("Cloud synchronisation error:", e);
-    }
-  };
-
-  // Save state back to cloud backend
-  const syncSaveCloudData = async (updates: {
+  // Local storage sync helpers (no cloud backend in APK mode)
+  const syncSaveCloudData = (updates: {
     favorites?: string[];
     isPremium?: boolean;
     biometricEnabled?: boolean;
@@ -206,129 +189,88 @@ export default function App() {
     customNotes?: { [activityId: string]: string };
   }) => {
     try {
-      await fetch("/api/sync/save", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userId,
-          ...updates
-        })
-      });
+      if (updates.favorites !== undefined) localStorage.setItem("favorites", JSON.stringify(updates.favorites));
+      if (updates.isPremium !== undefined) localStorage.setItem("is_premium", String(updates.isPremium));
+      if (updates.biometricEnabled !== undefined) localStorage.setItem("biometric_enabled", String(updates.biometricEnabled));
+      if (updates.pushNotifications !== undefined) localStorage.setItem("push_notifications", JSON.stringify(updates.pushNotifications));
+      if (updates.customNotes !== undefined) localStorage.setItem("custom_notes", JSON.stringify(updates.customNotes));
     } catch (e) {
-      console.error("Cloud synchronization save error:", e);
+      console.error("Local storage save error:", e);
     }
   };
 
-  const fetchNews = async (loc: string, pageNum: number = 1) => {
+  const fetchNews = (loc: string, pageNum: number = 1) => {
     setLoadingNews(true);
     setNewsPage(pageNum);
     try {
-      const res = await fetch(`/api/news?location=${encodeURIComponent(loc)}&season=${season}&lang=${lang}&page=${pageNum}`);
-      if (res.ok) {
-        const text = await res.text();
-        if (text.trim().startsWith("<")) {
-          console.warn("Got HTML instead of JSON for news. Skipping.");
-          return;
-        }
-        const data = JSON.parse(text);
-        setNewsList(data.news || []);
-      }
+      const news = getFallbackNewsForPage(loc, season, lang, pageNum);
+      setNewsList(news);
     } catch (e) {
-      console.error("Error fetching regional news RSS:", e);
+      console.error("Error loading local news:", e);
     } finally {
       setLoadingNews(false);
     }
   };
 
-  // Main fetch activities API call
-  const fetchActivities = async (customCoords?: { lat: number; lng: number }) => {
+  // Main load activities from embedded data (no server needed)
+  const fetchActivities = (customCoords?: { lat: number; lng: number }) => {
     setLoading(true);
     setErrorMsg(null);
     try {
-      const body: any = {
-        season,
-        lang,
-        location: searchQuery,
-        city: searchCity,
-        zip: searchZip,
-        addr: searchAddr,
-        radius: searchRadius
-      };
+      // Default center: Biarritz, France
+      let centerLat = 43.4832;
+      let centerLng = -1.5586;
+      let locationName = searchCity || searchQuery || "Biarritz, France";
+
       if (customCoords) {
-        body.lat = customCoords.lat;
-        body.lng = customCoords.lng;
-        body.location = ""; // clear location text to let coordinates resolve
-        body.city = "";
-        body.zip = "";
-        body.addr = "";
+        centerLat = customCoords.lat;
+        centerLng = customCoords.lng;
+        locationName = "";
         setSearchCity("");
         setSearchZip("");
         setSearchAddr("");
+      } else if (userCoords) {
+        centerLat = userCoords.lat;
+        centerLng = userCoords.lng;
       }
 
-      const res = await fetch("/api/activities", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body)
-      });
+      const result = computeLocalActivities(lang, season, searchRadius, centerLat, centerLng);
+      setActivities(result.activities);
 
-      if (res.ok) {
-        const text = await res.text();
-        if (text.trim().startsWith("<")) {
-          throw new Error(lang === "fr"
-            ? "⚠️ Erreur d'authentification : La requête a reçu une page HTML au lieu de données JSON. Sur mobile, cela signifie généralement que vous n'êtes pas connecté à votre compte Google (Seallia81@gmail.com) sur ce navigateur mobile spécifique. Veuillez copier le lien de cette page et l'ouvrir dans Google Chrome mobile connecté au même compte Google, ou exporter votre code (menu Paramètres > Exporter en ZIP) et l'héberger de manière publique et gratuite sur Netlify ou Vercel !"
-            : "⚠️ Authentication Error: The request received an HTML page instead of JSON. On mobile, this usually means you are not logged into your Google account (Seallia81@gmail.com) in this specific mobile browser. Please copy this page's URL and open it in Google Chrome mobile logged into the same Google account, or export your code (Settings > Export as ZIP) and host it for free on Netlify or Vercel!");
-        }
-        const data = JSON.parse(text);
-        setActivities(data.activities || []);
-        let resolvedLoc = searchQuery;
-        if (data.locationName) {
-          setSearchQuery(data.locationName);
-          resolvedLoc = data.locationName;
-        }
-        if (data.lat && data.lng) {
-          const coordsObj = { lat: data.lat, lng: data.lng };
-          setUserCoords(coordsObj);
-          localStorage.setItem("user_coords", JSON.stringify(coordsObj));
-          setResolvedCoords(coordsObj);
-        }
-        fetchNews(resolvedLoc, 1);
-      } else {
-        throw new Error("Erreur de communication avec le serveur.");
+      if (locationName) {
+        setSearchQuery(locationName);
       }
+
+      const coordsObj = { lat: centerLat, lng: centerLng };
+      setUserCoords(coordsObj);
+      localStorage.setItem("user_coords", JSON.stringify(coordsObj));
+      setResolvedCoords(coordsObj);
+
+      fetchNews(locationName || "France", 1);
     } catch (err: any) {
-      setErrorMsg(err.message || "Impossible de récupérer les activités de saison.");
+      setErrorMsg(err.message || "Impossible de charger les activités.");
     } finally {
       setLoading(false);
     }
   };
 
-  // Trigger Geolocation API of browser
-  const handleGeolocation = () => {
-    if (!navigator.geolocation) {
-      alert("La géolocalisation n'est pas supportée par votre navigateur.");
-      return;
-    }
+  // Position de l'utilisateur : plugin natif dans l'APK, API web sinon.
+  const handleGeolocation = async () => {
     setGeolocating(true);
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        const { latitude, longitude } = position.coords;
-        const coordsObj = { lat: latitude, lng: longitude };
-        setUserCoords(coordsObj);
-        localStorage.setItem("user_coords", JSON.stringify(coordsObj));
-        fetchActivities(coordsObj);
-        setGeolocating(false);
-      },
-      (error) => {
-        console.error("Geolocation error:", error);
-        setGeolocating(false);
-        // Fallback or warning alert
-        setErrorMsg("Accès à la géolocalisation refusé. Recherche par défaut sur Biarritz.");
-        setSearchQuery("Biarritz, France");
-        fetchActivities();
-      },
-      { timeout: 4000, enableHighAccuracy: false, maximumAge: 300000 }
-    );
+    setErrorMsg(null);
+    try {
+      const coordsObj = await getCurrentCoords();
+      setUserCoords(coordsObj);
+      localStorage.setItem("user_coords", JSON.stringify(coordsObj));
+      fetchActivities(coordsObj);
+    } catch (error) {
+      console.error("Geolocation error:", error);
+      setErrorMsg(geoErrorMessage(error, lang));
+      setSearchQuery("Biarritz, France");
+      fetchActivities();
+    } finally {
+      setGeolocating(false);
+    }
   };
 
   // Toggle favorite trigger
@@ -361,28 +303,23 @@ export default function App() {
     setPendingNoteActivityId(null);
   };
 
-  // Push notification simulator trigger (POST to server)
-  const handleSimulateNotification = async (title: string, body: string, category: string) => {
-    try {
-      const res = await fetch("/api/sync/trigger-notification", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId, title, body, category })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success) {
-          setPushNotifications(data.all);
-          // Highlight push alert banner dynamically at top
-          setPushAlertBanner(data.notification);
-          setTimeout(() => {
-            setPushAlertBanner(null);
-          }, 4500);
-        }
-      }
-    } catch (e) {
-      console.error("Error sending push notification simulation:", e);
-    }
+  // Push notification simulator (local only — no server)
+  const handleSimulateNotification = (title: string, body: string, category: string) => {
+    const newNotif: PushNotification = {
+      id: `notif-${Date.now()}`,
+      title: title || "Notification !",
+      body: body || "Ceci est un test de notification push.",
+      timestamp: new Date().toISOString(),
+      category: category || "promo",
+      read: false
+    };
+    const updated = [newNotif, ...pushNotifications];
+    setPushNotifications(updated);
+    syncSaveCloudData({ pushNotifications: updated });
+    setPushAlertBanner(newNotif);
+    setTimeout(() => {
+      setPushAlertBanner(null);
+    }, 4500);
   };
 
   const handleClearNotifications = () => {
@@ -405,8 +342,9 @@ export default function App() {
     setUserId(targetUid);
     setSyncStatusMsg("Connexion en cours...");
 
-    setTimeout(async () => {
-      await syncGetCloudData(targetUid);
+    // Les donnees sont conservees localement : il n'y a pas de serveur a
+    // interroger ici, seul l'identifiant de synchronisation est mis a jour.
+    setTimeout(() => {
       setSyncStatusMsg(t.syncDeviceSuccess);
       setSyncCodeField("");
       setTimeout(() => setSyncStatusMsg(null), 3000);

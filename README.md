@@ -1,104 +1,93 @@
-<img width="886" height="652" alt="image" src="https://github.com/user-attachments/assets/092d3b90-e000-4b87-a722-6e43d40c7bad" />
-
-
 # Saison & Terroir
 
 Application mobile de découverte d'activités locales, saison par saison.
 
-L'utilisateur indique une ville, un code postal, une adresse ou se géolocalise, choisit une saison, puis reçoit une sélection d'activités des environs : nature, culture, gastronomie, sport, bien-être. Chaque activité est présentée avec sa période idéale, son tarif indicatif, ses avis Google, ses coordonnées de contact et son lien de réservation, et peut être placée sur une carte, mise en favori, annotée ou planifiée dans un agenda.
+L'utilisateur se géolocalise ou saisit une ville, un code postal ou une adresse, choisit une saison, puis obtient une sélection d'activités des environs : nature, culture, gastronomie, sport, bien-être. Chaque activité est présentée avec sa période idéale, son tarif indicatif, ses avis, ses coordonnées de contact et son lien de réservation, et peut être placée sur une carte, mise en favori, annotée ou planifiée dans un agenda.
 
-L'application est disponible en cinq langues (français, anglais, allemand, italien, espagnol) et propose un thème sombre par défaut.
+L'application est disponible en cinq langues (français, anglais, allemand, italien, espagnol), propose un thème sombre par défaut, et **fonctionne intégralement hors ligne**.
 
 ---
 
 ## Sommaire
 
+- [Fonctionnement hors ligne](#fonctionnement-hors-ligne)
 - [Fonctionnalités](#fonctionnalités)
-- [Architecture](#architecture)
+- [Géolocalisation](#géolocalisation)
 - [Pile technique](#pile-technique)
-- [Installation](#installation)
-- [Variables d'environnement](#variables-denvironnement)
+- [Installation du projet](#installation-du-projet)
 - [Scripts disponibles](#scripts-disponibles)
-- [API du serveur](#api-du-serveur)
-- [Déploiement](#déploiement)
-- [Fonctions simulées](#fonctions-simulées)
+- [Application Android (APK)](#application-android-apk)
+- [Déploiement web](#déploiement-web)
+- [État d'avancement](#état-davancement)
 - [Données personnelles](#données-personnelles)
 - [Structure du projet](#structure-du-projet)
+- [Licence](#licence)
+
+---
+
+## Fonctionnement hors ligne
+
+L'application ne dépend d'aucun serveur pour fonctionner. Les activités et les actualités sont calculées localement, sur l'appareil, à partir d'un jeu de données embarqué (`src/data/fallbackData.ts`) et des coordonnées de l'utilisateur. Aucune requête réseau n'est nécessaire pour afficher un résultat.
+
+C'est ce qui permet de la distribuer sous forme d'APK autonome : elle reste pleinement utilisable en randonnée, en zone blanche ou en mode avion.
+
+> **Note sur `server.ts`.** Le dépôt contient encore un serveur Express, hérité d'une version antérieure qui interrogeait l'API Gemini pour générer les activités. **L'application ne l'utilise plus** : aucun fichier de `src/` n'appelle ses routes. Il est conservé pour servir la version web en développement, et comme base si une génération dynamique venait à être réintroduite.
 
 ---
 
 ## Fonctionnalités
 
-### Recherche et géolocalisation
+### Recherche et localisation
 
 - Recherche par nom de ville, code postal ou adresse exacte.
-- Bouton de géolocalisation utilisant la position du navigateur.
-- Rayon de recherche réglable de 5 à 100 km (20 km par défaut).
-- Sélection de la saison : printemps, été, automne, hiver. Le changement de saison relance automatiquement la recherche.
+- Géolocalisation de l'appareil (voir la section dédiée ci-dessous).
+- Rayon de recherche réglable de 5 à 100 km.
+- Sélection de la saison : printemps, été, automne, hiver.
 
-### Filtres avancés
+### Filtres
 
-- Budget maximum réglable de 0 à 1000 € (affiche « Gratuit » ou « Sans limite » aux extrêmes).
-- Note minimale des avis clients : toutes, 4.0, 4.5 ou 4.7 étoiles.
-- Cinq catégories d'activités : Grands Espaces & Nature, Culture & Patrimoine, Gastronomie & Terroir, Sport & Aventures, Bien-être & Détente.
+- Budget maximum, de 0 à 1000 €.
+- Note minimale des avis : toutes, 4.0, 4.5 ou 4.7 étoiles.
+- Cinq catégories : Grands Espaces & Nature, Culture & Patrimoine, Gastronomie & Terroir, Sport & Aventures, Bien-être & Détente.
 
-### Fiches d'activité
+### Activités
 
-Chaque activité affiche son nom, sa catégorie, sa description, sa période idéale, son tarif indicatif, un comparatif, ainsi que sa note Google, le nombre d'avis et un extrait d'avis récent. Un lien de réservation, un numéro de téléphone et une adresse e-mail sont proposés pour le contact direct.
-<img width="650" height="540" alt="image" src="https://github.com/user-attachments/assets/43fb5c4a-4059-40f0-b5c0-58d4815c40bc" />
-
+Chaque fiche présente la description de l'activité, sa période idéale, son tarif, un comparatif, sa note, le nombre d'avis et un extrait d'avis récent, ainsi qu'un lien de réservation, un téléphone et une adresse e-mail.
 
 ### Carte interactive
 
-Les activités trouvées sont affichées sous forme de marqueurs sur une carte. Cliquer sur un marqueur fait défiler la page jusqu'à la fiche correspondante.
+Les activités trouvées apparaissent sous forme de marqueurs. Cliquer sur un marqueur fait défiler la page jusqu'à la fiche correspondante.
 
 ### Favoris et notes privées
 
-- Ajout et retrait d'une activité en favori via l'icône en forme de cœur.
-- Rédaction d'une note personnelle par activité (mémo de réservation, heure d'arrivée, etc.).
-- Les notes peuvent être protégées par un verrouillage biométrique.
+Mise en favori par activité, et rédaction d'une note personnelle, protégeable par un verrouillage biométrique.
 
 ### Agenda et export calendrier
 
-- Calendrier interactif du mois de juillet 2026.
-- Planification d'une activité sur un jour donné.
-- Indicateur météo par jour, avec une alerte visuelle quand les conditions sont défavorables à une activité de plein air.
-- Export au format ICS, jour par jour ou pour le mois complet, importable dans l'agenda du téléphone.
+Calendrier interactif avec planification d'une activité par jour, indicateur météo et alerte en cas de conditions défavorables à une sortie en plein air. Export au format ICS, jour par jour ou pour le mois complet, importable dans l'agenda du téléphone.
 
 ### Actualités locales
 
-Fil d'actualité régional filtré par lieu, saison et langue, avec pagination. Chaque entrée affiche un titre, un résumé, une catégorie, une date de publication et un lien vers la source.
+Fil d'actualité régional filtré par lieu, saison et langue, avec pagination.
 
-<img width="648" height="430" alt="image" src="https://github.com/user-attachments/assets/7682b90d-2a21-4dce-9c3b-d7dfdaa79ec4" />
+### Compte
 
-
-### Compte et synchronisation
-
-- Onboarding au premier lancement : choix d'un pseudonyme et autorisation de géolocalisation.
-- Identifiant utilisateur généré automatiquement, servant de code de synchronisation.
-- Synchronisation entre appareils des favoris, du statut premium, des notifications, des notes et du réglage biométrique.
-
-### Notifications
-
-Centre de notifications listant les alertes reçues, avec distinction lu / non lu et bannière d'affichage en haut de l'écran.
-
-### Interface
-
-- Thème sombre et thème clair.
-- Changement de langue à la volée, qui relance la recherche dans la langue choisie.
-- Modale d'informations légales et RGPD.
-- Formulaire de contact au support.
-- Emplacements publicitaires et encarts partenaires.
+Onboarding au premier lancement (pseudonyme et autorisation de position), centre de notifications, informations légales et RGPD, formulaire de support.
 
 ---
 
-## Architecture
+## Géolocalisation
 
-L'application est une application « full-stack » : une interface React servie par un serveur Express, tous deux démarrés depuis le même projet.
+La géolocalisation conditionne l'ensemble des fonctionnalités : c'est elle qui détermine les activités proposées.
 
-Point important : **les appels au modèle Gemini sont effectués côté serveur**, jamais depuis le navigateur. La clé API reste donc sur le serveur et n'est pas exposée aux utilisateurs. Le client ne dialogue qu'avec les routes `/api/...` du serveur.
+Dans une application Android empaquetée avec Capacitor, l'API web `navigator.geolocation` **ne suffit pas**. Deux éléments sont indispensables :
 
-En l'absence de clé API valide, le serveur bascule automatiquement sur un jeu de données de démonstration afin que l'application reste utilisable.
+1. Les permissions déclarées dans `android/app/src/main/AndroidManifest.xml` : `ACCESS_FINE_LOCATION` et `ACCESS_COARSE_LOCATION`. Sans elles, l'application n'apparaît **même pas** dans les réglages de position d'Android, et aucune autorisation manuelle n'est possible.
+2. Le plugin `@capacitor/geolocation`, seul capable de déclencher la boîte de dialogue système d'autorisation depuis la WebView.
+
+Le module `src/utils/geo.ts` encapsule les deux cas : il utilise le plugin natif dans l'APK, et l'API web du navigateur ailleurs. Il distingue explicitement les causes d'échec (refus simple, refus définitif, délai dépassé, position indisponible) afin d'afficher un message utile plutôt qu'un échec muet.
+
+Le GPS est déclaré non obligatoire : l'application reste installable sur un appareil sans puce GPS, la position approximative suffisant à la recherche.
 
 ---
 
@@ -110,42 +99,21 @@ En l'absence de clé API valide, le serveur bascule automatiquement sur un jeu d
 | Style | Tailwind CSS 4 |
 | Icônes et animations | lucide-react, motion |
 | Cartographie | Leaflet, @vis.gl/react-google-maps |
-| Serveur | Express 4, tsx (développement), esbuild (production) |
-| IA | @google/genai (Gemini, appelé côté serveur) |
+| Mobile | Capacitor 8 (Android), @capacitor/geolocation |
+| Serveur (hérité, non utilisé par l'app) | Express 4, @google/genai |
 
 ---
 
-## Installation
+## Installation du projet
 
-Prérequis : Node.js.
+Prérequis : Node.js. Pour compiler l'APK, Android Studio (SDK Android et JDK).
 
 ```bash
 git clone https://github.com/Dow08/Saison-et-Terroir-Application-smartphone.git
 cd Saison-et-Terroir-Application-smartphone
 npm install
-```
-
-Créez ensuite un fichier `.env.local` à la racine (voir `.env.example`) :
-
-```
-GEMINI_API_KEY=votre_cle_api
-```
-
-Puis lancez l'application :
-
-```bash
 npm run dev
 ```
-
----
-
-## Variables d'environnement
-
-| Variable | Rôle | Obligatoire |
-|---|---|---|
-| `GEMINI_API_KEY` | Clé de l'API Google Gemini, utilisée côté serveur pour générer les activités et les actualités. | Non, mais sans elle l'application fonctionne en mode démonstration avec des données fixes. |
-
-Le fichier `.env.local` ne doit jamais être versionné.
 
 ---
 
@@ -154,48 +122,54 @@ Le fichier `.env.local` ne doit jamais être versionné.
 | Commande | Effet |
 |---|---|
 | `npm run dev` | Démarre le serveur de développement. |
-| `npm run build` | Compile l'interface avec Vite et le serveur avec esbuild vers `dist/`. |
-| `npm start` | Démarre le serveur compilé (`dist/server.cjs`). |
+| `npm run build` | Compile l'application dans `dist/`. |
 | `npm run lint` | Vérifie les types TypeScript sans produire de fichiers. |
-| `npm run clean` | Supprime les fichiers de build. |
+| `npx cap sync android` | Reporte le build web et les plugins dans le projet Android. |
 
 ---
 
-## API du serveur
+## Application Android (APK)
 
-| Route | Méthode | Rôle |
-|---|---|---|
-| `/api/activities` | POST | Renvoie les activités correspondant au lieu, à la saison et aux filtres. |
-| `/api/news` | GET | Renvoie les actualités régionales, paginées. |
-| `/api/sync/:userId` | GET | Récupère les données de l'utilisateur. |
-| `/api/sync/save` | POST | Enregistre les préférences de l'utilisateur. |
-| `/api/sync/trigger-notification` | POST | Déclenche une notification. |
-| `/api/build-info` | GET | Renvoie la version et des informations de diagnostic. |
+L'empaquetage est assuré par Capacitor. L'identifiant de l'application est `com.saisontterroir.app`.
 
----
-
-## Déploiement
-
-Cette application **nécessite un hébergeur capable d'exécuter Node.js**. Elle ne peut pas être déployée sur un hébergement purement statique : l'interface s'afficherait, mais toutes les routes `/api/...` renverraient une erreur et aucune activité ne serait trouvée.
-
-Hébergeurs adaptés : Google Cloud Run, Render, Railway, Fly.io, ou toute plateforme acceptant un serveur Node.
-
-Procédure :
+**Toute modification du code web doit être recompilée puis synchronisée avant de reconstruire l'APK**, sans quoi l'APK contiendra l'ancienne version :
 
 ```bash
 npm run build
-npm start
+npx cap sync android
+cd android
+./gradlew assembleRelease
 ```
 
-Le serveur écoute alors les requêtes et sert les fichiers compilés. Pensez à définir `GEMINI_API_KEY` dans les variables d'environnement de l'hébergeur.
+L'APK signé est produit dans `android/app/build/outputs/apk/release/`.
+
+### Signature
+
+La signature de release est lue depuis `android/keystore.properties`, qui référence un keystore. **Ces deux fichiers ne sont pas versionnés et ne doivent jamais l'être** : ils contiennent la clé de signature et ses mots de passe. Leur perte rend impossible toute mise à jour signée de l'application.
+
+Pour publier une mise à jour, incrémentez `versionCode` et `versionName` dans `android/app/build.gradle`.
+
+### Vérifier les permissions dans l'APK compilé
+
+```bash
+aapt dump badging android/app/build/outputs/apk/release/app-release.apk | grep uses-permission
+```
+
+`ACCESS_FINE_LOCATION` et `ACCESS_COARSE_LOCATION` doivent apparaître. Dans le cas contraire, la géolocalisation ne fonctionnera pas sur l'appareil.
+
+---
+
+## Déploiement web
+
+L'application ne dépendant plus d'aucune API, `npm run build` produit un dossier `dist/` **entièrement statique**. Il peut être déposé tel quel sur n'importe quel hébergement statique (Netlify, Vercel, GitHub Pages, Cloudflare Pages), sans serveur Node.
 
 ---
 
 ## État d'avancement
 
-Le cœur de l'application est fonctionnel : recherche géolocalisée, génération des activités par Gemini, filtres, carte, favoris, notes, agenda et export ICS, actualités, multilingue, synchronisation.
+Le cœur de l'application est fonctionnel : géolocalisation, recherche, filtres, carte, favoris, notes, agenda et export ICS, actualités, multilingue, thème sombre, fonctionnement hors ligne.
 
-Les modules suivants sont aujourd'hui implémentés au niveau du parcours utilisateur, avec les intégrations externes prévues dans une prochaine étape :
+Les modules suivants sont implémentés au niveau du parcours utilisateur, avec les intégrations externes prévues dans une prochaine étape :
 
 | Module | État actuel | Étape suivante |
 |---|---|---|
@@ -203,15 +177,16 @@ Les modules suivants sont aujourd'hui implémentés au niveau du parcours utilis
 | Authentification biométrique | Parcours de déverrouillage des notes privées | Appel aux capteurs de l'appareil via WebAuthn |
 | Notifications push | Centre de notifications et alertes dans l'application | Envoi de notifications système |
 | Météo de l'agenda | Indicateurs et alertes de plein air | Branchement d'une API météo |
+| Synchronisation multi-appareils | Données conservées localement sur l'appareil | Rétablissement d'une synchronisation serveur |
 | Encarts partenaires | Emplacements intégrés à la maquette | Connexion à une régie publicitaire |
 
 ---
 
 ## Données personnelles
 
-Les données suivantes sont conservées dans le stockage local du navigateur : pseudonyme, coordonnées de géolocalisation, activités planifiées, état de l'onboarding. Les favoris, notes et préférences peuvent en outre être synchronisés vers le serveur via le code de synchronisation.
+Les données restent sur l'appareil. Sont conservés dans le stockage local : pseudonyme, coordonnées de position, favoris, notes, activités planifiées et préférences. Aucune donnée n'est transmise à un serveur.
 
-La géolocalisation n'est activée qu'après accord explicite de l'utilisateur et peut être refusée : la recherche par ville, code postal ou adresse reste alors disponible.
+La position n'est demandée qu'après une action explicite de l'utilisateur et peut être refusée : la recherche par ville, code postal ou adresse reste alors disponible.
 
 ---
 
@@ -222,20 +197,26 @@ La géolocalisation n'est activée qu'après accord explicite de l'utilisateur e
 ├── src/
 │   ├── components/
 │   │   ├── ActivityCard.tsx            Fiche d'une activité
-│   │   ├── BiometricModal.tsx          Modale de déverrouillage biométrique
+│   │   ├── BiometricModal.tsx          Déverrouillage biométrique
 │   │   ├── InteractiveMap.tsx          Carte et marqueurs
 │   │   ├── NotificationCenter.tsx      Centre de notifications
 │   │   ├── OnboardingModal.tsx         Premier lancement
-│   │   ├── PremiumModal.tsx            Présentation de l'offre premium
+│   │   ├── PremiumModal.tsx            Offre premium
 │   │   ├── PrivacyModal.tsx            Informations légales et RGPD
 │   │   └── UpdateDiagnosticsModal.tsx  Diagnostic de l'application
-│   ├── utils/                          Fonctions utilitaires
-│   ├── App.tsx                         Composant principal et logique de l'app
+│   ├── data/
+│   │   └── fallbackData.ts             Données embarquées (activités, actualités)
+│   ├── utils/
+│   │   ├── geo.ts                      Géolocalisation native et web
+│   │   └── weather.ts                  Météo de l'agenda
+│   ├── App.tsx                         Composant principal
 │   ├── main.tsx                        Point d'entrée
 │   ├── types.ts                        Types et dictionnaires de traduction
 │   └── index.css                       Styles globaux
+├── android/                            Projet Android (Capacitor)
 ├── public/                             Ressources statiques
-├── server.ts                           Serveur Express et appels Gemini
+├── capacitor.config.ts                 Configuration de l'empaquetage mobile
+├── server.ts                           Serveur Express hérité, non utilisé par l'app
 ├── index.html
 ├── vite.config.ts
 ├── tsconfig.json

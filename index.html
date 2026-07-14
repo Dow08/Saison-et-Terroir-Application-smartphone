@@ -12,33 +12,7 @@
   </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-    <script>
-      if ('serviceWorker' in navigator) {
-        const isDevOrPreview = window.location.hostname.includes('run.app') || 
-                               window.location.hostname.includes('localhost') || 
-                               window.location.hostname.includes('127.0.0.1');
-        
-        if (isDevOrPreview) {
-          // Unregister any active service workers on development/preview instances
-          navigator.serviceWorker.getRegistrations().then((registrations) => {
-            for (let registration of registrations) {
-              registration.unregister().then((success) => {
-                if (success) {
-                  console.log('Unregistered active service worker for live preview stream stability.');
-                }
-              });
-            }
-          });
-        } else {
-          window.addEventListener('load', () => {
-            navigator.serviceWorker.register('/service-worker.js')
-              .then((reg) => console.log('Service Worker registered successfully!', reg.scope))
-              .catch((err) => console.warn('Service Worker registration failed:', err));
-          });
-        }
-      }
-    </script>
+    <script type="module" src="./src/main.tsx"></script>
   </body>
 </html>
 

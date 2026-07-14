@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { Compass, MapPin, Sparkles, User, Check, Loader2, ArrowRight } from "lucide-react";
 import { Language } from "../types";
+import { getCurrentCoords, geoErrorMessage } from "../utils/geo";
 
 interface OnboardingModalProps {
   isOpen: boolean;
@@ -19,50 +20,21 @@ export default function OnboardingModal({ isOpen, onClose, lang }: OnboardingMod
 
   if (!isOpen) return null;
 
-  const handleRequestGeoloc = () => {
+  const handleRequestGeoloc = async () => {
     setGeolocating(true);
     setGeolocStatus("idle");
     setErrorMsg(null);
 
-    if (!navigator.geolocation) {
+    try {
+      setCoords(await getCurrentCoords());
+      setGeolocStatus("success");
+    } catch (err) {
+      console.error("Geolocation error:", err);
       setGeolocStatus("error");
-      setErrorMsg(
-        lang === "fr"
-          ? "La géolocalisation n'est pas supportée par votre navigateur."
-          : "Geolocation is not supported by your browser."
-      );
+      setErrorMsg(geoErrorMessage(err, lang));
+    } finally {
       setGeolocating(false);
-      return;
     }
-
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        setCoords({
-          lat: position.coords.latitude,
-          lng: position.coords.longitude,
-        });
-        setGeolocStatus("success");
-        setGeolocating(false);
-      },
-      (err) => {
-        setGeolocStatus("error");
-        if (err.code === 1) {
-          setErrorMsg(
-            lang === "fr"
-              ? "Accès refusé. Veuillez autoriser l'accès à la position ou continuer manuellement."
-              : "Permission denied. Please allow location access or continue manually."
-          );
-        } else {
-          setErrorMsg(
-            lang === "fr"
-              ? "Impossible de récupérer votre position géographique actuelle."
-              : "Unable to retrieve your current geographical location."
-          );
-        }
-        setGeolocating(false);
-      },
-      { timeout: 4000, enableHighAccuracy: false, maximumAge: 300000 }
-    );
   };
 
   const handleFinish = () => {

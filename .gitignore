@@ -6,3 +6,13 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Keystore — NEVER commit
+*.keystore
+*.jks
+android/keystore.properties
+
+# Paquets Android compilés
+*.apk
+*.aab
+.gradle/

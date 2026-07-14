@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Saison et Terroir</string>
+    <string name="title_activity_main">Saison et Terroir</string>
+    <string name="package_name">com.saisontterroir.app</string>
+    <string name="custom_url_scheme">com.saisontterroir.app</string>
+</resources>
