@@ -168,7 +168,7 @@ function buildQuery(lat: number, lng: number, radiusMeters: number): string {
   // L'ordre des parametres de 'out' est impose par Overpass :
   // verbosite (tags), puis geometrie (center), puis limite.
   // 'out center tags' provoque une erreur 406.
-  return `[out:json][timeout:60];
+  return `[out:json][timeout:30];
 (
   ${clauses}
 );
@@ -263,47 +263,89 @@ export async function fetchActivities(
 
   const query = buildQuery(lat, lng, Math.round(radiusKm * 1000));
 
-  let data: any = null;
   let refused = false;
+
+  /** Interroge un miroir. Rejette si le service refuse ou n'aboutit pas. */
+  const ask = async (endpoint: string): Promise<any> => {
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ data: query }),
+      signal: AbortSignal.timeout(20000),
+    });
+
+    if (!res.ok) {
+      // 429 ou 504 : le serveur a bien repondu, il refuse de traiter la
+      // requete. Ce n'est pas une panne de reseau, et il ne faut surtout pas
+      // l'annoncer comme telle a l'utilisateur.
+      refused = true;
+      throw new ServiceBusyError(`Overpass a répondu ${res.status}.`);
+    }
+
+    const payload = await res.json();
+
+    // Piege : en cas de limitation de debit, Overpass renvoie un statut 200
+    // avec une liste vide et un champ "remark". Sans ce test, on afficherait
+    // "aucune activite" alors que le service a refuse de repondre.
+    if (payload?.remark) {
+      refused = true;
+      throw new ServiceBusyError(`Overpass : ${payload.remark}`);
+    }
+
+    return payload;
+  };
+
+  /**
+   * Interrogation echelonnee.
+   *
+   * En sequentiel, trois miroirs a 30 s font attendre l'utilisateur jusqu'a
+   * 90 s avant le moindre message : c'est ce qui donnait l'impression d'une
+   * application figee. On lance donc le miroir suivant si le precedent n'a pas
+   * repondu au bout de 8 s, sans annuler le premier, et on retient la premiere
+   * reponse valide. L'attente devient celle du miroir le plus rapide, tout en
+   * evitant de solliciter inutilement les trois d'entree de jeu.
+   */
+  const attempts: Promise<any>[] = [];
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  let data: any = null;
   let lastError: unknown = null;
 
-  for (const endpoint of ENDPOINTS) {
-    try {
-      // Sans delai maximal, un miroir surcharge peut ne jamais repondre et
-      // laisser l'utilisateur bloque sur l'indicateur de chargement.
-      const res = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({ data: query }),
-        signal: AbortSignal.timeout(25000),
-      });
+  /**
+   * Plafond global, decompte des le depart.
+   *
+   * Une premiere version ne demarrait ce plafond qu'apres l'echelonnement des
+   * miroirs : les deux delais s'additionnaient et l'utilisateur pouvait
+   * attendre plus de 50 s. Passe 30 s, on l'informe plutot que de le laisser
+   * devant un ecran de chargement.
+   */
+  const globalDeadline = new Promise<never>((_, reject) => {
+    setTimeout(() => {
+      refused = true;
+      reject(new ServiceBusyError("Délai global dépassé."));
+    }, 30000);
+  });
 
-      if (!res.ok) {
-        // 406 : requete rejetee (User-Agent de navigateur sur overpass-api.de).
-        // 429 / 504 : limitation de debit ou saturation.
-        // Dans tous ces cas le serveur a bien repondu : ce n'est pas une panne
-        // de reseau, et il ne faut pas le dire a l'utilisateur.
-        refused = true;
-        lastError = new ServiceBusyError(`Overpass a répondu ${res.status}.`);
-        continue;
-      }
+  const askAllMirrors = async (): Promise<any> => {
+    for (let i = 0; i < ENDPOINTS.length; i++) {
+      attempts.push(ask(ENDPOINTS[i]));
+      const winner = await Promise.any([
+        Promise.any(attempts),
+        // Declencheur : lance le miroir suivant si rien n'a repondu a temps,
+        // sans annuler les precedents.
+        sleep(6000).then(() => Promise.reject(new Error("relance"))),
+      ]).catch(() => null);
 
-      const payload = await res.json();
-
-      // Piege : en cas de limitation de debit, Overpass renvoie un statut 200
-      // avec une liste vide et un champ "remark". Sans ce test, on afficherait
-      // "aucune activite" alors que le service a refuse de repondre.
-      if (payload?.remark) {
-        refused = true;
-        lastError = new ServiceBusyError(`Overpass : ${payload.remark}`);
-        continue;
-      }
-
-      data = payload;
-      break;
-    } catch (e) {
-      lastError = e;
+      if (winner) return winner;
     }
+    return Promise.any(attempts);
+  };
+
+  try {
+    data = await Promise.race([askAllMirrors(), globalDeadline]);
+  } catch (e) {
+    // Promise.any rejette avec une AggregateError : on retient la premiere cause.
+    lastError = e instanceof AggregateError ? e.errors[0] : e;
   }
 
   // Aucun miroir n'a repondu : on se rabat sur le cache, meme perime. Mieux

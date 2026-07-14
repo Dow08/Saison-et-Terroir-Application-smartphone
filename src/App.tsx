@@ -63,7 +63,7 @@ export default function App() {
   const [searchCity, setSearchCity] = useState<string>("Biarritz");
   const [searchZip, setSearchZip] = useState<string>("");
   const [searchAddr, setSearchAddr] = useState<string>("");
-  const [searchRadius, setSearchRadius] = useState<number>(20);
+  const [searchRadius, setSearchRadius] = useState<number>(10);
   const [showAdvancedFilters, setShowAdvancedFilters] = useState<boolean>(false);
   const [resolvedCoords, setResolvedCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [userName, setUserName] = useState<string>(() => localStorage.getItem("user_nickname") || "Explorateur");
@@ -142,6 +142,15 @@ export default function App() {
   // service etant momentanement injoignable. Null = donnees fraiches.
   const [cachedAt, setCachedAt] = useState<number | null>(null);
 
+  // Echec de geolocalisation : signale par un bandeau, sans masquer les
+  // activites eventuellement deja trouvees par une recherche manuelle.
+  const [geoNotice, setGeoNotice] = useState<string | null>(null);
+
+  // Numero de la derniere operation lancee. Empeche une reponse tardive
+  // (geolocalisation lente, miroir Overpass a la traine) d'ecraser le
+  // resultat d'une recherche plus recente.
+  const requestSeq = useRef(0);
+
   // Tech support priority ticket states
   const [supportText, setSupportText] = useState("");
   const [supportSuccess, setSupportSuccess] = useState(false);
@@ -210,6 +219,7 @@ export default function App() {
    * @param label nom du lieu deja connu, sinon il est resolu par geocodage inverse
    */
   const loadActivitiesAt = async (lat: number, lng: number, label: string | null) => {
+    const seq = ++requestSeq.current;
     setLoading(true);
     setErrorMsg(null);
     setActivityPage(1);
@@ -232,14 +242,18 @@ export default function App() {
       if (placeLabel) setSearchQuery(placeLabel);
 
       const result = await fetchOsmActivities(lat, lng, searchRadius, lang);
+      // Une recherche plus recente a ete lancee : on abandonne ce resultat
+      // plutot que d'ecraser l'affichage courant.
+      if (seq !== requestSeq.current) return;
       setActivities(result.activities);
       setCachedAt(result.fromCache ? (result.cachedAt ?? null) : null);
     } catch (err) {
+      if (seq !== requestSeq.current) return;
       setActivities([]);
       setCachedAt(null);
       setErrorMsg(describeError(err));
     } finally {
-      setLoading(false);
+      if (seq === requestSeq.current) setLoading(false);
     }
   };
 
@@ -251,19 +265,37 @@ export default function App() {
    * endroit, et il coupe puis rétablit son Wi-Fi sans effet.
    */
   const describeError = (err: unknown): string => {
+    // Seul l'etat reel de l'appareil fait foi pour parler de connexion.
     if (!navigator.onLine) return d.offline;
-    if (err instanceof ServiceBusyError) return d.serviceBusy;
+
     if (err instanceof NotFoundError) return d.placeNotFound;
-    if (err instanceof NetworkError) return d.offline;
+
+    // En ligne mais echec : c'est le service, jamais le reseau de l'utilisateur.
+    // Un delai depasse cote miroir remontait auparavant comme NetworkError et
+    // affichait "pas de connexion" a quelqu'un de parfaitement connecte.
+    if (err instanceof ServiceBusyError || err instanceof NetworkError) {
+      return d.serviceBusy;
+    }
+
     return err instanceof Error ? err.message : d.noResults;
   };
 
-  /** Geolocalise precisement puis charge les activites autour de la position. */
+  /**
+   * Geolocalise precisement puis charge les activites autour de la position.
+   *
+   * Un echec de geolocalisation ne doit PAS effacer des activites deja
+   * trouvees. Auparavant, une geolocalisation lente qui echouait au bout de
+   * 15 s ecrasait le resultat d'une recherche lancee entre-temps, et l'ecran
+   * n'affichait plus que l'erreur alors que les activites etaient bien la.
+   * L'echec est donc signale par un bandeau distinct, non bloquant.
+   */
   const locateAndLoad = async () => {
+    const seq = ++requestSeq.current;
     setGeolocating(true);
-    setErrorMsg(null);
+    setGeoNotice(null);
     try {
       const coords = await getCurrentCoords();
+      if (seq !== requestSeq.current) return; // une recherche plus recente a pris la main
       setUserCoords(coords);
       localStorage.setItem("user_coords", JSON.stringify(coords));
       setSearchCity("");
@@ -272,9 +304,10 @@ export default function App() {
       await loadActivitiesAt(coords.lat, coords.lng, null);
     } catch (error) {
       console.error("Geolocation error:", error);
-      setErrorMsg(geoErrorMessage(error, lang));
+      if (seq === requestSeq.current) setGeoNotice(geoErrorMessage(error, lang));
     } finally {
-      setGeolocating(false);
+      if (seq === requestSeq.current) setGeolocating(false);
+      else setGeolocating(false);
     }
   };
 
@@ -503,24 +536,20 @@ export default function App() {
   });
 
   /**
-   * La saison ne filtre pas les lieux : OSM ne connait pas leur saisonnalite.
-   * Elle ordonne seulement les suggestions, en remontant les categories
-   * pertinentes (exterieur en ete, interieur en hiver). Les distances, elles,
-   * restent la cle de tri principale au sein d'une meme categorie.
+   * Tri par distance croissante, sans exception.
+   *
+   * Une version precedente classait d'abord par categorie selon la saison :
+   * la premiere page ne contenait alors que des lieux "Nature", et un musee
+   * situe a 100 m se retrouvait page 20. C'est contraire a l'usage attendu :
+   * l'utilisateur veut d'abord ce qui est le plus proche de lui.
+   *
+   * La saison ne peut de toute facon pas filtrer les lieux, OpenStreetMap ne
+   * connaissant pas leur saisonnalite : elle ne sert qu'a departager deux
+   * activites situees a la meme distance.
    */
-  const SEASON_PRIORITY: Record<Season, ActivityCategory[]> = {
-    Spring: ["Nature", "Culture", "Gastronomy", "Sport", "Relaxation"],
-    Summer: ["Nature", "Sport", "Gastronomy", "Culture", "Relaxation"],
-    Autumn: ["Gastronomy", "Culture", "Nature", "Relaxation", "Sport"],
-    Winter: ["Culture", "Relaxation", "Gastronomy", "Sport", "Nature"],
-  };
-
-  const displayedActivities = [...filteredActivities].sort((a, b) => {
-    const order = SEASON_PRIORITY[season];
-    const rank = order.indexOf(a.category) - order.indexOf(b.category);
-    if (rank !== 0) return rank;
-    return a.distanceKm - b.distanceKm;
-  });
+  const displayedActivities = [...filteredActivities].sort(
+    (a, b) => a.distanceKm - b.distanceKm
+  );
 
   /**
    * "Activité locale Live" : informations sur la localité.
@@ -1361,11 +1390,12 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Error messages if any */}
-              {errorMsg && (
-                <div id="error-alert" className="p-3 bg-red-500/10 border border-red-500/20 text-red-400 text-xs rounded-xl flex items-start gap-2">
-                  <AlertTriangle className="w-4 h-4 shrink-0 text-red-400" />
-                  <p className="font-semibold leading-relaxed">{errorMsg}</p>
+              {/* Géolocalisation indisponible : information, pas blocage.
+                  La recherche par ville reste utilisable. */}
+              {geoNotice && (
+                <div className="p-3 bg-amber-500/10 border border-amber-500/20 text-amber-500 text-xs rounded-xl flex items-start gap-2">
+                  <MapPin className="w-4 h-4 shrink-0" />
+                  <p className="font-semibold leading-relaxed">{geoNotice}</p>
                 </div>
               )}
 

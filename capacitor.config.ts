@@ -17,7 +17,7 @@ const config: CapacitorConfig = {
      * normalement, et l'usage devient conforme.
      */
     overrideUserAgent:
-      'SaisonTerroir/2.3 (Android; +https://github.com/Dow08/Saison-et-Terroir-Application-smartphone)',
+      'SaisonTerroir/2.4 (Android; +https://github.com/Dow08/Saison-et-Terroir-Application-smartphone)',
   },
 };
 
