@@ -530,6 +530,12 @@ export interface DataLabels {
   next: string;
   retry: string;
   seasonSortNote: string;
+  serviceBusy: string;
+  cachedNote: (date: string) => string;
+  localInfoTitle: (place: string) => string;
+  tourismOffice: string;
+  localEvents: string;
+  localNews: string;
 }
 
 export const DATA_LABELS: { [key in Language]: DataLabels } = {
@@ -557,7 +563,13 @@ export const DATA_LABELS: { [key in Language]: DataLabels } = {
     prev: "Précédent",
     next: "Suivant",
     retry: "Réessayer",
-    seasonSortNote: "La saison ordonne les suggestions ; elle ne filtre pas les lieux."
+    seasonSortNote: "La saison ordonne les suggestions ; elle ne filtre pas les lieux.",
+    serviceBusy: "Le service OpenStreetMap est momentanément saturé. Votre connexion fonctionne : réessayez dans un instant.",
+    cachedNote: (date) => `Résultats enregistrés le ${date}. Le service est momentanément indisponible.`,
+    localInfoTitle: (place) => `S'informer sur ${place}`,
+    tourismOffice: "Office de tourisme",
+    localEvents: "Événements et agenda",
+    localNews: "Actualités locales"
   },
   en: {
     loadingActivities: "Searching for real activities around this point...",
@@ -583,7 +595,13 @@ export const DATA_LABELS: { [key in Language]: DataLabels } = {
     prev: "Previous",
     next: "Next",
     retry: "Retry",
-    seasonSortNote: "The season orders the suggestions; it does not filter places."
+    seasonSortNote: "The season orders the suggestions; it does not filter places.",
+    serviceBusy: "The OpenStreetMap service is momentarily overloaded. Your connection is fine: please try again shortly.",
+    cachedNote: (date) => `Results saved on ${date}. The service is momentarily unavailable.`,
+    localInfoTitle: (place) => `Local information: ${place}`,
+    tourismOffice: "Tourist office",
+    localEvents: "Events and agenda",
+    localNews: "Local news"
   },
   de: {
     loadingActivities: "Suche nach echten Aktivitäten in der Umgebung...",
@@ -609,7 +627,13 @@ export const DATA_LABELS: { [key in Language]: DataLabels } = {
     prev: "Zurück",
     next: "Weiter",
     retry: "Erneut versuchen",
-    seasonSortNote: "Die Jahreszeit ordnet die Vorschläge; sie filtert die Orte nicht."
+    seasonSortNote: "Die Jahreszeit ordnet die Vorschläge; sie filtert die Orte nicht.",
+    serviceBusy: "Der OpenStreetMap-Dienst ist derzeit überlastet. Ihre Verbindung ist in Ordnung: bitte gleich erneut versuchen.",
+    cachedNote: (date) => `Am ${date} gespeicherte Ergebnisse. Der Dienst ist derzeit nicht verfügbar.`,
+    localInfoTitle: (place) => `Informationen zu ${place}`,
+    tourismOffice: "Touristeninformation",
+    localEvents: "Veranstaltungen",
+    localNews: "Lokale Nachrichten"
   },
   it: {
     loadingActivities: "Ricerca di attività reali intorno a questo punto...",
@@ -635,7 +659,13 @@ export const DATA_LABELS: { [key in Language]: DataLabels } = {
     prev: "Precedente",
     next: "Successivo",
     retry: "Riprova",
-    seasonSortNote: "La stagione ordina i suggerimenti; non filtra i luoghi."
+    seasonSortNote: "La stagione ordina i suggerimenti; non filtra i luoghi.",
+    serviceBusy: "Il servizio OpenStreetMap è momentaneamente sovraccarico. La connessione funziona: riprova tra poco.",
+    cachedNote: (date) => `Risultati salvati il ${date}. Il servizio è momentaneamente non disponibile.`,
+    localInfoTitle: (place) => `Informazioni su ${place}`,
+    tourismOffice: "Ufficio del turismo",
+    localEvents: "Eventi e agenda",
+    localNews: "Notizie locali"
   },
   es: {
     loadingActivities: "Buscando actividades reales alrededor de este punto...",
@@ -661,6 +691,12 @@ export const DATA_LABELS: { [key in Language]: DataLabels } = {
     prev: "Anterior",
     next: "Siguiente",
     retry: "Reintentar",
-    seasonSortNote: "La estación ordena las sugerencias; no filtra los lugares."
+    seasonSortNote: "La estación ordena las sugerencias; no filtra los lugares.",
+    serviceBusy: "El servicio OpenStreetMap está momentáneamente saturado. Su conexión funciona: inténtelo de nuevo en un momento.",
+    cachedNote: (date) => `Resultados guardados el ${date}. El servicio no está disponible por ahora.`,
+    localInfoTitle: (place) => `Información sobre ${place}`,
+    tourismOffice: "Oficina de turismo",
+    localEvents: "Eventos y agenda",
+    localNews: "Noticias locales"
   }
 };

@@ -183,10 +183,64 @@ function readFee(tags: Record<string, string>): { fee: Activity["fee"]; charge?:
   return { fee: "unknown" };
 }
 
+/**
+ * Le service a repondu, mais a refuse de traiter la requete : saturation ou
+ * limitation de debit. A distinguer absolument d'une absence de connexion :
+ * dire "vous n'avez pas de reseau" a un utilisateur connecte l'envoie chercher
+ * la panne au mauvais endroit.
+ */
+export class ServiceBusyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ServiceBusyError";
+  }
+}
+
 export interface FetchActivitiesResult {
   activities: Activity[];
-  /** Nombre d'elements renvoyes par OSM avant filtrage par rayon. */
-  rawCount: number;
+  /** Les activites proviennent du cache local, le service etant injoignable. */
+  fromCache: boolean;
+  /** Date de mise en cache, si fromCache. */
+  cachedAt?: number;
+}
+
+// ── Cache local ──────────────────────────────────────────────────────
+//
+// Les instances publiques d'Overpass limitent le debit. Sans cache, chaque
+// changement de ville ou de rayon declenchait une nouvelle requete, jusqu'a se
+// faire refuser. Le cache evite de solliciter le service pour une recherche
+// deja faite, et permet de rester utile quand il est indisponible.
+//
+// Il ne contient que des donnees reellement recues d'OpenStreetMap : ce n'est
+// pas une donnee de demonstration, seulement une donnee plus ancienne, dont la
+// date est affichee a l'utilisateur.
+
+const CACHE_PREFIX = "osm_cache_v1:";
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+function cacheKey(lat: number, lng: number, radiusKm: number, lang: string): string {
+  // Arrondi a ~1 km : deux recherches voisines partagent le meme cache.
+  return `${CACHE_PREFIX}${lat.toFixed(2)}:${lng.toFixed(2)}:${radiusKm}:${lang}`;
+}
+
+function readCache(key: string): { activities: Activity[]; at: number } | null {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed?.activities)) return null;
+    return { activities: parsed.activities, at: parsed.at ?? 0 };
+  } catch {
+    return null;
+  }
+}
+
+function writeCache(key: string, activities: Activity[]): void {
+  try {
+    localStorage.setItem(key, JSON.stringify({ at: Date.now(), activities }));
+  } catch {
+    // Quota depasse : le cache est un confort, son echec ne doit rien casser.
+  }
 }
 
 /**
@@ -199,9 +253,18 @@ export async function fetchActivities(
   radiusKm: number,
   lang: string = "fr"
 ): Promise<FetchActivitiesResult> {
+  const key = cacheKey(lat, lng, radiusKm, lang);
+
+  // Cache encore frais : on ne sollicite pas le service du tout.
+  const cached = readCache(key);
+  if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
+    return { activities: cached.activities, fromCache: false };
+  }
+
   const query = buildQuery(lat, lng, Math.round(radiusKm * 1000));
 
   let data: any = null;
+  let refused = false;
   let lastError: unknown = null;
 
   for (const endpoint of ENDPOINTS) {
@@ -212,21 +275,27 @@ export async function fetchActivities(
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({ data: query }),
-        signal: AbortSignal.timeout(45000),
+        signal: AbortSignal.timeout(25000),
       });
+
       if (!res.ok) {
-        lastError = new NetworkError(`Overpass a répondu ${res.status}.`);
+        // 406 : requete rejetee (User-Agent de navigateur sur overpass-api.de).
+        // 429 / 504 : limitation de debit ou saturation.
+        // Dans tous ces cas le serveur a bien repondu : ce n'est pas une panne
+        // de reseau, et il ne faut pas le dire a l'utilisateur.
+        refused = true;
+        lastError = new ServiceBusyError(`Overpass a répondu ${res.status}.`);
         continue;
       }
 
       const payload = await res.json();
 
-      // Piege : en cas de limitation de debit ou de surcharge, Overpass renvoie
-      // un statut 200 avec une liste vide et un champ "remark". Sans ce test, on
-      // afficherait "aucune activite" alors que le service a simplement refuse
-      // de repondre. On bascule donc sur le miroir suivant.
+      // Piege : en cas de limitation de debit, Overpass renvoie un statut 200
+      // avec une liste vide et un champ "remark". Sans ce test, on afficherait
+      // "aucune activite" alors que le service a refuse de repondre.
       if (payload?.remark) {
-        lastError = new NetworkError(`Overpass : ${payload.remark}`);
+        refused = true;
+        lastError = new ServiceBusyError(`Overpass : ${payload.remark}`);
         continue;
       }
 
@@ -235,6 +304,18 @@ export async function fetchActivities(
     } catch (e) {
       lastError = e;
     }
+  }
+
+  // Aucun miroir n'a repondu : on se rabat sur le cache, meme perime. Mieux
+  // vaut des donnees reelles datees qu'un ecran vide.
+  if (!data && cached) {
+    return { activities: cached.activities, fromCache: true, cachedAt: cached.at };
+  }
+
+  if (!data && refused) {
+    throw new ServiceBusyError(
+      lastError instanceof Error ? lastError.message : "Service OpenStreetMap saturé."
+    );
   }
 
   if (!data) {
@@ -303,5 +384,7 @@ export async function fetchActivities(
 
   activities.sort((a, b) => a.distanceKm - b.distanceKm);
 
-  return { activities, rawCount: elements.length };
+  writeCache(key, activities);
+
+  return { activities, fromCache: false };
 }

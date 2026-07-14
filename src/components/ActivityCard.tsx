@@ -69,22 +69,36 @@ export default function ActivityCard({
     return IconComp ? <IconComp className="w-6 h-6" /> : <Icons.Compass className="w-6 h-6" />;
   };
 
+  /**
+   * Tarif, affiche directement dans l'en-tete de la fiche.
+   *
+   * Le montant exact est montre quand OpenStreetMap le renseigne (tag charge).
+   * Sinon on indique honnetement qu'il n'est pas connu, plutot que de laisser
+   * croire a la gratuite par l'absence d'indication.
+   */
   const feeBadge = () => {
     if (activity.fee === "free") {
       return (
         <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-[10px] font-bold rounded-md border border-emerald-500/25">
+          <Icons.Ticket className="w-3 h-3" />
           {d.feeFree}
         </span>
       );
     }
     if (activity.fee === "paid") {
       return (
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-slate-500/10 text-slate-600 dark:text-slate-300 text-[10px] font-bold rounded-md border border-slate-500/25">
-          {activity.charge ? activity.charge : d.feePaid}
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-500/10 text-amber-600 dark:text-amber-400 text-[10px] font-bold rounded-md border border-amber-500/25">
+          <Icons.Ticket className="w-3 h-3" />
+          {activity.charge ?? d.feePaid}
         </span>
       );
     }
-    return null;
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-slate-500/10 text-slate-500 dark:text-slate-400 text-[10px] font-medium rounded-md border border-slate-500/20">
+        <Icons.HelpCircle className="w-3 h-3" />
+        {d.feeUnknown}
+      </span>
+    );
   };
 
   return (

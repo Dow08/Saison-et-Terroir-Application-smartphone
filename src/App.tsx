@@ -36,7 +36,7 @@ import {
 import { Language, Season, Activity, ActivityCategory, PushNotification, LOCALIZATION, DATA_LABELS } from "./types";
 import { getDefaultNotifications, FALLBACK_BUILD_INFO } from "./data/fallbackData";
 import { geocode, reverseGeocode, NetworkError, NotFoundError } from "./services/geocoding";
-import { fetchActivities as fetchOsmActivities, distanceKm } from "./services/overpass";
+import { fetchActivities as fetchOsmActivities, distanceKm, ServiceBusyError } from "./services/overpass";
 import ActivityCard from "./components/ActivityCard";
 import BiometricModal from "./components/BiometricModal";
 import PremiumModal from "./components/PremiumModal";
@@ -138,6 +138,10 @@ export default function App() {
   // Point de recherche courant : position GPS ou lieu geocode.
   const [searchCenter, setSearchCenter] = useState<{ lat: number; lng: number; label: string } | null>(null);
 
+  // Horodatage si les activites affichees proviennent du cache local, le
+  // service etant momentanement injoignable. Null = donnees fraiches.
+  const [cachedAt, setCachedAt] = useState<number | null>(null);
+
   // Tech support priority ticket states
   const [supportText, setSupportText] = useState("");
   const [supportSuccess, setSupportSuccess] = useState(false);
@@ -227,18 +231,31 @@ export default function App() {
       setResolvedCoords({ lat, lng });
       if (placeLabel) setSearchQuery(placeLabel);
 
-      const { activities: found } = await fetchOsmActivities(lat, lng, searchRadius, lang);
-      setActivities(found);
+      const result = await fetchOsmActivities(lat, lng, searchRadius, lang);
+      setActivities(result.activities);
+      setCachedAt(result.fromCache ? (result.cachedAt ?? null) : null);
     } catch (err) {
       setActivities([]);
-      if (err instanceof NetworkError || !navigator.onLine) {
-        setErrorMsg(d.offline);
-      } else {
-        setErrorMsg(err instanceof Error ? err.message : d.noResults);
-      }
+      setCachedAt(null);
+      setErrorMsg(describeError(err));
     } finally {
       setLoading(false);
     }
+  };
+
+  /**
+   * Traduit une erreur en message juste.
+   *
+   * Un service saturé n'est PAS une absence de connexion : afficher "pas de
+   * réseau" à un utilisateur connecté l'envoie chercher la panne au mauvais
+   * endroit, et il coupe puis rétablit son Wi-Fi sans effet.
+   */
+  const describeError = (err: unknown): string => {
+    if (!navigator.onLine) return d.offline;
+    if (err instanceof ServiceBusyError) return d.serviceBusy;
+    if (err instanceof NotFoundError) return d.placeNotFound;
+    if (err instanceof NetworkError) return d.offline;
+    return err instanceof Error ? err.message : d.noResults;
   };
 
   /** Geolocalise precisement puis charge les activites autour de la position. */
@@ -290,13 +307,7 @@ export default function App() {
     } catch (err) {
       setActivities([]);
       setLoading(false);
-      if (err instanceof NotFoundError) {
-        setErrorMsg(d.placeNotFound);
-      } else if (err instanceof NetworkError || !navigator.onLine) {
-        setErrorMsg(d.offline);
-      } else {
-        setErrorMsg(err instanceof Error ? err.message : d.placeNotFound);
-      }
+      setErrorMsg(describeError(err));
     }
   };
 
@@ -510,6 +521,57 @@ export default function App() {
     if (rank !== 0) return rank;
     return a.distanceKm - b.distanceKm;
   });
+
+  /**
+   * "Activité locale Live" : informations sur la localité.
+   *
+   * Ce sont des liens sortants vers de vraies recherches (office de tourisme,
+   * agenda, actualités du lieu), et non des articles générés. Rendu sous les
+   * activités, et conservé même quand le service d'activités est indisponible :
+   * c'est justement là qu'il rend service.
+   */
+  const renderLocalInfo = () => {
+    const place = searchCenter?.label || searchQuery;
+    if (!place) return null;
+
+    const links = [
+      { label: d.tourismOffice, icon: <Info className="w-4 h-4 text-amber-500" />, q: `office de tourisme ${place}` },
+      { label: d.localEvents, icon: <CalendarDays className="w-4 h-4 text-amber-500" />, q: `agenda événements sortir ${place}` },
+      { label: d.localNews, icon: <FileText className="w-4 h-4 text-amber-500" />, q: `actualités ${place}` },
+    ];
+
+    return (
+      <div className="bg-[#0d0d0d] border border-white/10 rounded-2xl p-5 space-y-3.5">
+        <div className="flex items-center gap-2">
+          <span className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+          </span>
+          <h4 className="text-xs font-bold uppercase tracking-widest text-slate-200">
+            {d.localInfoTitle(place)}
+          </h4>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+          {links.map((item) => (
+            <a
+              key={item.label}
+              href={`https://www.google.com/search?q=${encodeURIComponent(item.q)}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center justify-between gap-2 bg-[#050505] hover:bg-[#0c0c0c] border border-white/5 hover:border-amber-500/25 p-3.5 rounded-xl transition-all text-xs font-bold text-slate-300"
+            >
+              <span className="flex items-center gap-2">
+                {item.icon}
+                {item.label}
+              </span>
+              <ExternalLink className="w-3.5 h-3.5 text-slate-500" />
+            </a>
+          ))}
+        </div>
+      </div>
+    );
+  };
 
   const totalPages = Math.max(1, Math.ceil(displayedActivities.length / PER_PAGE));
   const currentPage = Math.min(activityPage, totalPages);
@@ -1319,18 +1381,33 @@ export default function App() {
                   </div>
                 </div>
               ) : errorMsg ? (
-                <div className="bg-[#0d0d0d] border border-red-500/20 rounded-2xl p-6 text-center space-y-3">
-                  <AlertTriangle className="w-8 h-8 text-red-500 mx-auto" />
-                  <p className="text-xs text-slate-300 leading-relaxed font-semibold">{errorMsg}</p>
-                  <button
-                    onClick={() => reloadCurrent()}
-                    className="px-4 py-2 bg-amber-500/10 border border-amber-500/20 rounded-xl text-xs font-bold text-amber-500 hover:bg-amber-500/20 transition-all"
-                  >
-                    {d.retry}
-                  </button>
-                </div>
+                <>
+                  <div className="bg-[#0d0d0d] border border-red-500/20 rounded-2xl p-6 text-center space-y-3">
+                    <AlertTriangle className="w-8 h-8 text-red-500 mx-auto" />
+                    <p className="text-xs text-slate-300 leading-relaxed font-semibold">{errorMsg}</p>
+                    <button
+                      onClick={() => reloadCurrent()}
+                      className="px-4 py-2 bg-amber-500/10 border border-amber-500/20 rounded-xl text-xs font-bold text-amber-500 hover:bg-amber-500/20 transition-all"
+                    >
+                      {d.retry}
+                    </button>
+                  </div>
+                  {/* Les informations locales restent accessibles même si le
+                      service d'activités est indisponible. */}
+                  {renderLocalInfo()}
+                </>
               ) : (
                 <>
+                  {/* Données du cache : le service était injoignable. */}
+                  {cachedAt !== null && (
+                    <div className="p-3 bg-amber-500/10 border border-amber-500/20 text-amber-500 text-[11px] rounded-xl flex items-start gap-2">
+                      <Info className="w-4 h-4 shrink-0" />
+                      <p className="font-semibold leading-relaxed">
+                        {d.cachedNote(new Date(cachedAt).toLocaleDateString())}
+                      </p>
+                    </div>
+                  )}
+
                   {/* Interactive Map Visualizer */}
                   {displayedActivities.length > 0 && (
                     <InteractiveMap
@@ -1416,40 +1493,7 @@ export default function App() {
                     )}
                   </div>
 
-                  {/* S'informer sur la région : liens sortants réels, placés
-                      sous les activités car purement informatifs. */}
-                  {searchCenter?.label && (
-                    <div className="bg-[#0d0d0d] border border-white/10 rounded-2xl p-5 space-y-3">
-                      <h4 className="text-xs font-bold uppercase tracking-widest text-slate-200">
-                        {lang === "fr"
-                          ? `S'informer sur ${searchCenter.label}`
-                          : `Local information: ${searchCenter.label}`}
-                      </h4>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                        {[
-                          {
-                            label: lang === "fr" ? "Office de tourisme" : "Tourist office",
-                            q: `office de tourisme ${searchCenter.label}`,
-                          },
-                          {
-                            label: lang === "fr" ? "Événements et agenda" : "Events and agenda",
-                            q: `agenda événements ${searchCenter.label}`,
-                          },
-                        ].map((item) => (
-                          <a
-                            key={item.label}
-                            href={`https://www.google.com/search?q=${encodeURIComponent(item.q)}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="flex items-center justify-between gap-2 bg-[#050505] hover:bg-[#0c0c0c] border border-white/5 hover:border-amber-500/20 p-3.5 rounded-xl transition-all text-xs font-bold text-slate-300"
-                          >
-                            <span>{item.label}</span>
-                            <ExternalLink className="w-3.5 h-3.5 text-amber-500" />
-                          </a>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                  {renderLocalInfo()}
                 </>
               )}
             </div>
