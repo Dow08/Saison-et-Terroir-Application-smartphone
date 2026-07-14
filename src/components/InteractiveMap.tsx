@@ -164,8 +164,8 @@ export default function InteractiveMap({
             <span style="font-size: 8.5px; font-weight: bold; text-transform: uppercase; padding: 2px 6px; border-radius: 4px; color: #ffffff; background-color: ${pinColor}; letter-spacing: 0.05em;">
               ${act.category}
             </span>
-            <span style="font-weight: bold; color: #d97706; font-size: 11px; display: flex; align-items: center; gap: 2px;">
-              ★ ${act.googleReviews?.rating || "4.5"}
+            <span style="font-weight: 600; color: #64748b; font-size: 10px;">
+              ${act.typeLabel}
             </span>
           </div>
           <h4 style="font-size: 13px; font-weight: bold; color: #0f172a; margin: 0 0 4px 0; font-family: Georgia, serif; font-style: italic; leading-snug: true;">

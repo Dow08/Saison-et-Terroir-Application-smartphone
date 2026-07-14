@@ -27,14 +27,16 @@ import {
   CalendarDays,
   CalendarCheck,
   Trash2,
-  Megaphone,
   Scale,
   FileText,
-  Map
+  Map,
+  ExternalLink
 } from "lucide-react";
 
-import { Language, Season, Activity, PushNotification, LOCALIZATION } from "./types";
-import { computeLocalActivities, getFallbackNewsForPage, getDefaultNotifications, FALLBACK_BUILD_INFO } from "./data/fallbackData";
+import { Language, Season, Activity, ActivityCategory, PushNotification, LOCALIZATION, DATA_LABELS } from "./types";
+import { getDefaultNotifications, FALLBACK_BUILD_INFO } from "./data/fallbackData";
+import { geocode, reverseGeocode, NetworkError, NotFoundError } from "./services/geocoding";
+import { fetchActivities as fetchOsmActivities } from "./services/overpass";
 import ActivityCard from "./components/ActivityCard";
 import BiometricModal from "./components/BiometricModal";
 import PremiumModal from "./components/PremiumModal";
@@ -63,7 +65,6 @@ export default function App() {
   const [searchAddr, setSearchAddr] = useState<string>("");
   const [searchRadius, setSearchRadius] = useState<number>(20);
   const [showAdvancedFilters, setShowAdvancedFilters] = useState<boolean>(false);
-  const [newsPage, setNewsPage] = useState<number>(1);
   const [resolvedCoords, setResolvedCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [userName, setUserName] = useState<string>(() => localStorage.getItem("user_nickname") || "Explorateur");
   const [selectedDay, setSelectedDay] = useState<number>(13);
@@ -78,8 +79,6 @@ export default function App() {
 
   const [activities, setActivities] = useState<Activity[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
-  const [newsList, setNewsList] = useState<any[]>([]);
-  const [loadingNews, setLoadingNews] = useState<boolean>(false);
   const [selectedActivityId, setSelectedActivityId] = useState<string | null>(null);
   const [geolocating, setGeolocating] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -123,16 +122,23 @@ export default function App() {
   const [syncCodeField, setSyncCodeField] = useState<string>("");
   const [syncStatusMsg, setSyncStatusMsg] = useState<string | null>(null);
 
-  // Advanced client-side filtering states
-  const [priceFilter, setPriceFilter] = useState<string>("all");
-  const [ratingFilter, setRatingFilter] = useState<number>(0);
-  const [maxPriceFilter, setMaxPriceFilter] = useState<number>(1000);
+  // Filtrage : uniquement sur des donnees reellement fournies par OSM.
+  const [feeFilter, setFeeFilter] = useState<"all" | "free" | "paid">("all");
+  const [categoryFilter, setCategoryFilter] = useState<ActivityCategory | "all">("all");
+
+  // Pagination des activites (les resultats reels peuvent etre nombreux).
+  const [activityPage, setActivityPage] = useState<number>(1);
+  const PER_PAGE = 8;
+
+  // Point de recherche courant : position GPS ou lieu geocode.
+  const [searchCenter, setSearchCenter] = useState<{ lat: number; lng: number; label: string } | null>(null);
 
   // Tech support priority ticket states
   const [supportText, setSupportText] = useState("");
   const [supportSuccess, setSupportSuccess] = useState(false);
 
   const t = LOCALIZATION[lang];
+  const d = DATA_LABELS[lang];
   const listTopRef = useRef<HTMLDivElement>(null);
 
   // Effect: Native dark mode toggle helper on HTML node
@@ -148,22 +154,11 @@ export default function App() {
     }
   }, [darkMode]);
 
-  // Initial trigger: Load activities from local data (no server)
+  // Au demarrage : localiser precisement l'utilisateur, puis charger les
+  // activites reelles autour de lui. Aucune donnee de secours n'est affichee.
   useEffect(() => {
-    // Only auto-fetch on mount if onboarding is already completed
-    if (localStorage.getItem("onboarding_completed")) {
-      const storedCoords = localStorage.getItem("user_coords");
-      if (storedCoords) {
-        try {
-          const parsed = JSON.parse(storedCoords);
-          fetchActivities(parsed);
-        } catch {
-          fetchActivities();
-        }
-      } else {
-        fetchActivities();
-      }
-    }
+    if (!localStorage.getItem("onboarding_completed")) return;
+    locateAndLoad();
   }, []);
 
   const handleOnboardingClose = (nickname: string, coords: { lat: number; lng: number } | null) => {
@@ -174,9 +169,9 @@ export default function App() {
     if (coords) {
       setUserCoords(coords);
       localStorage.setItem("user_coords", JSON.stringify(coords));
-      fetchActivities(coords);
+      loadActivitiesAt(coords.lat, coords.lng, null);
     } else {
-      fetchActivities();
+      locateAndLoad();
     }
   };
 
@@ -199,77 +194,115 @@ export default function App() {
     }
   };
 
-  const fetchNews = (loc: string, pageNum: number = 1) => {
-    setLoadingNews(true);
-    setNewsPage(pageNum);
-    try {
-      const news = getFallbackNewsForPage(loc, season, lang, pageNum);
-      setNewsList(news);
-    } catch (e) {
-      console.error("Error loading local news:", e);
-    } finally {
-      setLoadingNews(false);
-    }
-  };
-
-  // Main load activities from embedded data (no server needed)
-  const fetchActivities = (customCoords?: { lat: number; lng: number }) => {
+  /**
+   * Charge les activites REELLES autour d'un point, depuis OpenStreetMap.
+   * En cas d'echec, on affiche l'erreur : jamais de donnee de substitution.
+   *
+   * @param label nom du lieu deja connu, sinon il est resolu par geocodage inverse
+   */
+  const loadActivitiesAt = async (lat: number, lng: number, label: string | null) => {
     setLoading(true);
     setErrorMsg(null);
+    setActivityPage(1);
+
+    let placeLabel = label;
+
     try {
-      // Default center: Biarritz, France
-      let centerLat = 43.4832;
-      let centerLng = -1.5586;
-      let locationName = searchCity || searchQuery || "Biarritz, France";
-
-      if (customCoords) {
-        centerLat = customCoords.lat;
-        centerLng = customCoords.lng;
-        locationName = "";
-        setSearchCity("");
-        setSearchZip("");
-        setSearchAddr("");
-      } else if (userCoords) {
-        centerLat = userCoords.lat;
-        centerLng = userCoords.lng;
+      if (!placeLabel) {
+        try {
+          placeLabel = (await reverseGeocode(lat, lng, lang)).label;
+        } catch {
+          // Le nom du lieu est un confort, pas une condition : on continue sans.
+          placeLabel = null;
+        }
       }
 
-      const result = computeLocalActivities(lang, season, searchRadius, centerLat, centerLng);
-      setActivities(result.activities);
+      const center = { lat, lng, label: placeLabel ?? "" };
+      setSearchCenter(center);
+      setResolvedCoords({ lat, lng });
+      if (placeLabel) setSearchQuery(placeLabel);
 
-      if (locationName) {
-        setSearchQuery(locationName);
+      const { activities: found } = await fetchOsmActivities(lat, lng, searchRadius, lang);
+      setActivities(found);
+    } catch (err) {
+      setActivities([]);
+      if (err instanceof NetworkError || !navigator.onLine) {
+        setErrorMsg(d.offline);
+      } else {
+        setErrorMsg(err instanceof Error ? err.message : d.noResults);
       }
-
-      const coordsObj = { lat: centerLat, lng: centerLng };
-      setUserCoords(coordsObj);
-      localStorage.setItem("user_coords", JSON.stringify(coordsObj));
-      setResolvedCoords(coordsObj);
-
-      fetchNews(locationName || "France", 1);
-    } catch (err: any) {
-      setErrorMsg(err.message || "Impossible de charger les activités.");
     } finally {
       setLoading(false);
     }
   };
 
-  // Position de l'utilisateur : plugin natif dans l'APK, API web sinon.
-  const handleGeolocation = async () => {
+  /** Geolocalise precisement puis charge les activites autour de la position. */
+  const locateAndLoad = async () => {
     setGeolocating(true);
     setErrorMsg(null);
     try {
-      const coordsObj = await getCurrentCoords();
-      setUserCoords(coordsObj);
-      localStorage.setItem("user_coords", JSON.stringify(coordsObj));
-      fetchActivities(coordsObj);
+      const coords = await getCurrentCoords();
+      setUserCoords(coords);
+      localStorage.setItem("user_coords", JSON.stringify(coords));
+      setSearchCity("");
+      setSearchZip("");
+      setSearchAddr("");
+      await loadActivitiesAt(coords.lat, coords.lng, null);
     } catch (error) {
       console.error("Geolocation error:", error);
       setErrorMsg(geoErrorMessage(error, lang));
-      setSearchQuery("Biarritz, France");
-      fetchActivities();
     } finally {
       setGeolocating(false);
+    }
+  };
+
+  const handleGeolocation = () => {
+    void locateAndLoad();
+  };
+
+  /**
+   * Recherche d'un autre lieu (ville, code postal, adresse).
+   * La saisie est convertie en coordonnees reelles par geocodage, puis les
+   * activites de CE lieu sont chargees : la carte et la liste suivent.
+   */
+  const handleSearchPlace = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+
+    const query = [searchAddr, searchCity, searchZip]
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .join(", ");
+
+    if (!query) return;
+
+    setLoading(true);
+    setErrorMsg(null);
+    try {
+      // La position connue sert de biais : sans elle, une saisie comme "31000"
+      // peut renvoyer un homonyme a l'autre bout du monde.
+      const place = await geocode(query, lang, userCoords);
+      await loadActivitiesAt(place.lat, place.lng, place.label);
+    } catch (err) {
+      setActivities([]);
+      setLoading(false);
+      if (err instanceof NotFoundError) {
+        setErrorMsg(d.placeNotFound);
+      } else if (err instanceof NetworkError || !navigator.onLine) {
+        setErrorMsg(d.offline);
+      } else {
+        setErrorMsg(err instanceof Error ? err.message : d.placeNotFound);
+      }
+    }
+  };
+
+  /** Relance la recherche sur le point courant (changement de rayon, de langue). */
+  const reloadCurrent = () => {
+    if (searchCenter) {
+      void loadActivitiesAt(searchCenter.lat, searchCenter.lng, searchCenter.label || null);
+    } else if (userCoords) {
+      void loadActivitiesAt(userCoords.lat, userCoords.lng, null);
+    } else {
+      void locateAndLoad();
     }
   };
 
@@ -429,40 +462,41 @@ export default function App() {
     return firstSegment || "Occitanie";
   };
 
-  // Helper: Extract numeric price from activity price string
-  const getActivityPriceNumber = (priceStr: string): number => {
-    if (!priceStr) return 0;
-    const str = priceStr.toLowerCase();
-    if (
-      str.includes("gratuit") ||
-      str.includes("free") ||
-      str.includes("0€") ||
-      str.includes("offert") ||
-      str.includes("libre")
-    ) {
-      return 0;
-    }
-    const numMatch = str.match(/\d+/);
-    if (numMatch) {
-      return parseInt(numMatch[0], 10);
-    }
-    return 15; // Default fallback price
-  };
-
   // Client-side advanced filter resolver
-  const displayedActivities = activities.filter((act) => {
-    // Check if max price slider filter is applied
-    if (maxPriceFilter < 1000) {
-      const priceVal = getActivityPriceNumber(act.price);
-      if (priceVal > maxPriceFilter) return false;
-    }
-    // Check if rating filter is applied
-    if (ratingFilter > 0) {
-      const actRating = act.googleReviews?.rating || 0;
-      if (actRating < ratingFilter) return false;
-    }
+  // Filtres appliques uniquement sur des donnees reellement fournies par OSM.
+  const filteredActivities = activities.filter((act) => {
+    if (feeFilter === "free" && act.fee !== "free") return false;
+    if (feeFilter === "paid" && act.fee !== "paid") return false;
+    if (categoryFilter !== "all" && act.category !== categoryFilter) return false;
     return true;
   });
+
+  /**
+   * La saison ne filtre pas les lieux : OSM ne connait pas leur saisonnalite.
+   * Elle ordonne seulement les suggestions, en remontant les categories
+   * pertinentes (exterieur en ete, interieur en hiver). Les distances, elles,
+   * restent la cle de tri principale au sein d'une meme categorie.
+   */
+  const SEASON_PRIORITY: Record<Season, ActivityCategory[]> = {
+    Spring: ["Nature", "Culture", "Gastronomy", "Sport", "Relaxation"],
+    Summer: ["Nature", "Sport", "Gastronomy", "Culture", "Relaxation"],
+    Autumn: ["Gastronomy", "Culture", "Nature", "Relaxation", "Sport"],
+    Winter: ["Culture", "Relaxation", "Gastronomy", "Sport", "Nature"],
+  };
+
+  const displayedActivities = [...filteredActivities].sort((a, b) => {
+    const order = SEASON_PRIORITY[season];
+    const rank = order.indexOf(a.category) - order.indexOf(b.category);
+    if (rank !== 0) return rank;
+    return a.distanceKm - b.distanceKm;
+  });
+
+  const totalPages = Math.max(1, Math.ceil(displayedActivities.length / PER_PAGE));
+  const currentPage = Math.min(activityPage, totalPages);
+  const pagedActivities = displayedActivities.slice(
+    (currentPage - 1) * PER_PAGE,
+    currentPage * PER_PAGE
+  );
 
   // Local calendar synchronization via standards-compliant ICS download
   const handleExportToDeviceCalendar = (day: number) => {
@@ -674,35 +708,6 @@ export default function App() {
 
 
 
-            {/* Simulated Advertisement Frame right under the account section */}
-            <div className="p-3 bg-gradient-to-br from-slate-900 to-[#0c0c0c] border border-amber-500/10 rounded-2xl shrink-0 text-left space-y-2 relative overflow-hidden group">
-              <div className="absolute top-0 right-0 bg-amber-500/20 text-amber-400 text-[8px] font-extrabold px-1.5 py-0.5 rounded-bl uppercase tracking-wider font-mono">
-                {lang === "fr" ? "Sponsorisé" : "Sponsored"}
-              </div>
-              <div className="flex items-center gap-1.5">
-                <Megaphone className="w-3.5 h-3.5 text-amber-500 animate-bounce" />
-                <span className="text-[9px] font-extrabold uppercase tracking-wider text-amber-500">
-                  {lang === "fr" ? "OFFRE EXCLUSIVE" : "EXCLUSIVE OFFER"}
-                </span>
-              </div>
-              <p className="text-[10px] font-bold text-slate-200 leading-snug">
-                {lang === "fr" ? `Séjours & Gîtes - ${getCleanLocalCity(searchQuery, searchCity)}` : `Boutique Stays - ${getCleanLocalCity(searchQuery, searchCity)}`}
-              </p>
-              <p className="text-[9px] text-slate-400 leading-relaxed">
-                {lang === "fr"
-                  ? `Profitez de -15% supplémentaires sur votre séjour d'exception à ${getCleanLocalCity(searchQuery, searchCity)} en partenariat avec l'Office de Tourisme local !`
-                  : `Enjoy an extra 15% off your premium holiday rentals in ${getCleanLocalCity(searchQuery, searchCity)} in partnership with the local Tourism Office!`}
-              </p>
-              <a
-                href={`https://www.google.com/search?q=${encodeURIComponent("office de tourisme " + getCleanLocalCity(searchQuery, searchCity) + " gite hotel reservation")}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="block text-center w-full py-1.5 bg-amber-500 hover:bg-amber-450 text-black text-[9px] font-extrabold rounded-lg transition-all"
-              >
-                {lang === "fr" ? `Découvrir ${getCleanLocalCity(searchQuery, searchCity)} →` : `Explore ${getCleanLocalCity(searchQuery, searchCity)} →`}
-              </a>
-            </div>
-
             {/* Dynamic Interactive Calendar Agenda */}
             <div className="bg-[#050505] border border-white/5 rounded-2xl p-3.5 space-y-2.5 shrink-0">
               <div className="flex items-center justify-between">
@@ -867,7 +872,7 @@ export default function App() {
                           onClick={() => {
                             setLang(ln);
                             setShowDesktopLangDropdown(false);
-                            setTimeout(() => fetchActivities(), 100);
+                            setTimeout(() => reloadCurrent(), 100);
                           }}
                           className={`w-full px-4 py-2.5 hover:bg-slate-50 dark:hover:bg-white/5 text-left transition-colors font-bold ${
                             lang === ln ? "text-amber-500 bg-amber-500/5" : ""
@@ -971,7 +976,7 @@ export default function App() {
                           onClick={() => {
                             setLang(ln);
                             setShowMobileLangDropdown(false);
-                            setTimeout(() => fetchActivities(resolvedCoords || undefined), 100);
+                            setTimeout(() => reloadCurrent(), 100);
                           }}
                           className={`w-full px-4 py-2.5 hover:bg-slate-50 dark:hover:bg-white/5 text-left transition-colors ${
                             lang === ln ? "text-amber-500 bg-amber-500/5" : ""
@@ -1038,7 +1043,7 @@ export default function App() {
                           value={searchCity}
                           onChange={(e) => setSearchCity(e.target.value)}
                           onKeyDown={(e) => {
-                            if (e.key === "Enter") fetchActivities();
+                            if (e.key === "Enter") void handleSearchPlace();
                           }}
                           className="w-full bg-[#050505] border border-white/10 focus:border-amber-500/50 rounded-xl py-3 pl-10 pr-3 text-xs text-slate-200 placeholder-slate-600 focus:outline-hidden"
                         />
@@ -1054,7 +1059,7 @@ export default function App() {
                           value={searchZip}
                           onChange={(e) => setSearchZip(e.target.value)}
                           onKeyDown={(e) => {
-                            if (e.key === "Enter") fetchActivities();
+                            if (e.key === "Enter") void handleSearchPlace();
                           }}
                           className="w-full bg-[#050505] border border-white/10 focus:border-amber-500/50 rounded-xl py-3 pl-10 pr-3 text-xs text-slate-200 placeholder-slate-600 focus:outline-hidden"
                         />
@@ -1070,7 +1075,7 @@ export default function App() {
                           value={searchAddr}
                           onChange={(e) => setSearchAddr(e.target.value)}
                           onKeyDown={(e) => {
-                            if (e.key === "Enter") fetchActivities();
+                            if (e.key === "Enter") void handleSearchPlace();
                           }}
                           className="w-full bg-[#050505] border border-white/10 focus:border-amber-500/50 rounded-xl py-3 pl-10 pr-3 text-xs text-slate-200 placeholder-slate-600 focus:outline-hidden"
                         />
@@ -1097,9 +1102,11 @@ export default function App() {
 
                       <button
                         id="btn-search-trigger"
-                        onClick={() => fetchActivities()}
-                        className="px-6 py-3 bg-amber-500 hover:bg-amber-450 text-black text-xs font-extrabold rounded-xl transition-all shadow-lg shadow-amber-500/15 shrink-0 animate-pulse hover:animate-none"
+                        onClick={() => void handleSearchPlace()}
+                        disabled={loading}
+                        className="px-6 py-3 bg-amber-500 hover:bg-amber-400 disabled:opacity-60 text-black text-xs font-extrabold rounded-xl transition-all shadow-lg shadow-amber-500/15 shrink-0 flex items-center gap-2"
                       >
+                        {loading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                         {t.searchButton}
                       </button>
                     </div>
@@ -1134,6 +1141,8 @@ export default function App() {
                             step="5"
                             value={searchRadius}
                             onChange={(e) => setSearchRadius(parseInt(e.target.value, 10))}
+                            onMouseUp={() => reloadCurrent()}
+                            onTouchEnd={() => reloadCurrent()}
                             className="w-full accent-amber-500 h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer"
                           />
                           <div className="flex justify-between text-[9px] text-slate-600 font-mono">
@@ -1145,64 +1154,64 @@ export default function App() {
                           </div>
                         </div>
 
-                        {/* Gamme de prix Slider & Avis minimum Filters */}
+                        {/* Filtres appuyés sur des données réellement fournies par OpenStreetMap */}
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
-                          {/* Price Range Slider */}
-                          <div className="space-y-2">
-                            <div className="flex justify-between text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                              <span>
-                                {lang === "fr" ? "Budget / Prix maximum" : "Max Budget / Price"}
-                              </span>
-                              <span className="text-amber-500 font-mono text-xs font-bold">
-                                {maxPriceFilter === 0
-                                  ? (lang === "fr" ? "Gratuit" : "Free")
-                                  : maxPriceFilter === 1000
-                                  ? (lang === "fr" ? "Sans limite" : "No limit")
-                                  : `${maxPriceFilter} €`}
-                              </span>
-                            </div>
-
-                            <input
-                              type="range"
-                              min="0"
-                              max="1000"
-                              step="10"
-                              value={maxPriceFilter}
-                              onChange={(e) => setMaxPriceFilter(parseInt(e.target.value, 10))}
-                              className="w-full accent-amber-500 h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer"
-                            />
-                            <div className="flex justify-between text-[9px] text-slate-600 font-mono">
-                              <span>0 € (Gratuit)</span>
-                              <span>250 €</span>
-                              <span>500 €</span>
-                              <span>750 €</span>
-                              <span>1 000 €+</span>
-                            </div>
-                          </div>
-
-                          {/* Minimum Ratings rating Filter */}
+                          {/* Tarif : issu des tags OSM fee / charge */}
                           <div className="space-y-2">
                             <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
-                              {lang === "fr" ? "Note minimale des avis clients" : "Minimum Customer Rating"}
+                              {d.feeLabel}
                             </label>
-                            <div className="grid grid-cols-4 gap-1.5">
-                              {([0, 4.0, 4.5, 4.7] as const).map((r) => (
+                            <div className="grid grid-cols-3 gap-1.5">
+                              {([
+                                ["all", d.feeAll],
+                                ["free", d.feeFree],
+                                ["paid", d.feePaid],
+                              ] as const).map(([value, label]) => (
                                 <button
                                   type="button"
-                                  key={r}
-                                  onClick={() => setRatingFilter(r)}
+                                  key={value}
+                                  onClick={() => {
+                                    setFeeFilter(value);
+                                    setActivityPage(1);
+                                  }}
                                   className={`py-2 rounded-lg text-xs font-bold text-center border transition-all ${
-                                    ratingFilter === r
-                                      ? "bg-amber-500 border-amber-500 text-black shadow-lg shadow-amber-500/10"
+                                    feeFilter === value
+                                      ? "bg-amber-500 border-amber-500 text-black"
                                       : "bg-[#050505] border-white/10 text-slate-400 hover:text-white"
                                   }`}
                                 >
-                                  {r === 0 ? (lang === "fr" ? "Toutes" : "Any") : `${r} ★`}
+                                  {label}
                                 </button>
                               ))}
                             </div>
                           </div>
+
+                          {/* Catégorie */}
+                          <div className="space-y-2">
+                            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                              {t.categoryLabel}
+                            </label>
+                            <select
+                              value={categoryFilter}
+                              onChange={(e) => {
+                                setCategoryFilter(e.target.value as ActivityCategory | "all");
+                                setActivityPage(1);
+                              }}
+                              className="w-full bg-[#050505] border border-white/10 focus:border-amber-500/50 rounded-lg py-2.5 px-3 text-xs text-slate-200 focus:outline-hidden"
+                            >
+                              <option value="all">{d.feeAll}</option>
+                              {(["Nature", "Culture", "Gastronomy", "Sport", "Relaxation"] as ActivityCategory[]).map((c) => (
+                                <option key={c} value={c}>
+                                  {t.categories[c]}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
                         </div>
+
+                        <p className="text-[10px] text-slate-500 leading-relaxed border-t border-white/5 pt-2.5">
+                          {d.sourceNote}
+                        </p>
                       </motion.div>
                     )}
                   </AnimatePresence>
@@ -1236,9 +1245,10 @@ export default function App() {
                         key={s}
                         id={`btn-season-${s}`}
                         onClick={() => {
+                          // La saison reordonne les suggestions ; elle ne
+                          // change pas les lieux, inutile de recharger OSM.
                           setSeason(s);
-                          // Fetch automatically when season changes
-                          setTimeout(() => fetchActivities(resolvedCoords || undefined), 50);
+                          setActivityPage(1);
                         }}
                         className={`py-2 px-1 rounded-lg text-[10px] font-extrabold text-center uppercase tracking-wider border transition-all ${
                           season === s
@@ -1264,10 +1274,26 @@ export default function App() {
               )}
 
               {/* Loader feedback */}
-              {loading ? (
-                <div className="py-20 text-center text-slate-400 flex flex-col items-center">
-                  <Loader2 className="w-8 h-8 text-amber-500 animate-spin mb-3" />
-                  <p className="text-xs font-semibold font-serif italic">Génération des activités locales via Gemini AI...</p>
+              {loading || geolocating ? (
+                <div className="py-20 text-center text-slate-400 flex flex-col items-center gap-3">
+                  <Loader2 className="w-8 h-8 text-amber-500 animate-spin" />
+                  <p className="text-xs font-semibold font-serif italic">
+                    {geolocating ? d.locating : d.loadingActivities}
+                  </p>
+                  <div className="w-40 h-1 bg-white/5 rounded-full overflow-hidden">
+                    <div className="h-full w-1/3 bg-amber-500 rounded-full animate-[pulse_1.2s_ease-in-out_infinite]" />
+                  </div>
+                </div>
+              ) : errorMsg ? (
+                <div className="bg-[#0d0d0d] border border-red-500/20 rounded-2xl p-6 text-center space-y-3">
+                  <AlertTriangle className="w-8 h-8 text-red-500 mx-auto" />
+                  <p className="text-xs text-slate-300 leading-relaxed font-semibold">{errorMsg}</p>
+                  <button
+                    onClick={() => reloadCurrent()}
+                    className="px-4 py-2 bg-amber-500/10 border border-amber-500/20 rounded-xl text-xs font-bold text-amber-500 hover:bg-amber-500/20 transition-all"
+                  >
+                    {d.retry}
+                  </button>
                 </div>
               ) : (
                 <>
@@ -1283,248 +1309,113 @@ export default function App() {
                     />
                   )}
 
-                  {/* Local Regional News Feed */}
-                  {newsList.length > 0 && (
-                    <div className="bg-[#0d0d0d] border border-white/10 rounded-2xl p-5 space-y-3.5">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <span className="relative flex h-2 w-2">
-                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                          </span>
-                          <h4 className="text-xs font-bold uppercase tracking-widest text-slate-200">
-                            {lang === "fr" ? "Activité Locale Live" : "Live Local Activities Feed"}
-                          </h4>
-                        </div>
-                        <span className="text-[9.5px] font-mono text-amber-500 bg-amber-500/5 px-2 py-0.5 rounded-sm border border-amber-500/10 uppercase tracking-widest">
-                          {season === "Spring" ? (lang === "fr" ? "Printemps" : "Spring") : season === "Summer" ? (lang === "fr" ? "Été" : "Summer") : season === "Autumn" ? (lang === "fr" ? "Automne" : "Autumn") : (lang === "fr" ? "Hiver" : "Winter")}
-                        </span>
-                      </div>
-                      
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-                        {newsList.map((news) => (
-                          <a
-                            key={news.id}
-                            href={news.link}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="group bg-[#050505] hover:bg-[#0c0c0c] border border-white/5 hover:border-amber-500/20 p-4 rounded-xl transition-all duration-300 flex flex-col justify-between"
-                          >
-                            <div className="space-y-1.5">
-                              <div className="flex items-center justify-between text-[9px] uppercase tracking-wider text-slate-500">
-                                <span className="bg-amber-500/10 text-amber-400 px-2 py-0.5 rounded-md font-bold">
-                                  {news.category}
-                                </span>
-                                <span>{news.date}</span>
-                              </div>
-                              <h5 className="text-xs font-bold text-slate-100 group-hover:text-amber-500 transition-colors line-clamp-1">
-                                {news.title}
-                              </h5>
-                              <p className="text-[11px] text-slate-400 line-clamp-2 leading-relaxed">
-                                {news.summary}
-                              </p>
-                            </div>
-                            <div className="flex items-center justify-between mt-3 pt-2 border-t border-white/5 text-[9.5px] text-slate-500 font-mono">
-                              <span>{news.source}</span>
-                              <span className="text-amber-500 group-hover:underline flex items-center gap-0.5 font-bold">
-                                {lang === "fr" ? "Voir l'article" : "Read Article"} →
-                              </span>
-                            </div>
-                          </a>
-                        ))}
-                      </div>
-
-                      {/* Pagination Controller for News Feed (Pages 1 to 50) */}
-                      <div id="news-pagination-container" className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3.5 border-t border-white/5 text-xs font-medium">
-                        {/* Summary of current page */}
-                        <div className="text-[11px] text-slate-500">
-                          {lang === "fr" 
-                            ? `Affichage de la page ${newsPage} sur 50` 
-                            : `Showing page ${newsPage} of 50`}
-                        </div>
-
-                        {/* Pagination controls */}
-                        <div className="flex items-center gap-1.5">
-                          <button
-                            id="btn-prev-page"
-                            onClick={() => {
-                              if (newsPage > 1) {
-                                fetchNews(searchQuery, newsPage - 1);
-                              }
-                            }}
-                            disabled={newsPage === 1}
-                            className="px-2.5 py-1.5 rounded-lg border border-white/5 bg-[#050505] text-[10px] text-slate-400 hover:text-white disabled:opacity-30 disabled:pointer-events-none transition-all"
-                          >
-                            {lang === "fr" ? "← Précédent" : "← Prev"}
-                          </button>
-
-                          {/* Dynamic middle pages range */}
-                          {(() => {
-                            const pages = [];
-                            const start = Math.max(1, newsPage - 1);
-                            const end = Math.min(50, start + 2);
-                            
-                            // Adjust start if close to boundary
-                            const adjustedStart = Math.max(1, Math.min(start, 50 - 2));
-
-                            for (let i = adjustedStart; i <= Math.min(50, adjustedStart + 2); i++) {
-                              pages.push(
-                                <button
-                                  key={i}
-                                  onClick={() => fetchNews(searchQuery, i)}
-                                  className={`w-7 h-7 rounded-lg text-[10px] font-mono transition-all ${
-                                    newsPage === i
-                                      ? "bg-amber-500 text-black font-extrabold"
-                                      : "border border-white/5 bg-[#050505] text-slate-400 hover:text-white"
-                                  }`}
-                                >
-                                  {i}
-                                </button>
-                              );
-                            }
-                            return pages;
-                          })()}
-
-                          {newsPage < 48 && (
-                            <span className="text-slate-600 px-1 font-mono text-[10px]">...</span>
-                          )}
-
-                          {newsPage < 49 && (
-                            <button
-                              onClick={() => fetchNews(searchQuery, 50)}
-                              className={`w-7 h-7 rounded-lg text-[10px] font-mono transition-all ${
-                                newsPage === 50
-                                  ? "bg-amber-500 text-black font-extrabold"
-                                  : "border border-white/5 bg-[#050505] text-slate-400 hover:text-white"
-                              }`}
-                            >
-                              50
-                            </button>
-                          )}
-
-                          <button
-                            id="btn-next-page"
-                            onClick={() => {
-                              if (newsPage < 50) {
-                                fetchNews(searchQuery, newsPage + 1);
-                              }
-                            }}
-                            disabled={newsPage === 50}
-                            className="px-2.5 py-1.5 rounded-lg border border-white/5 bg-[#050505] text-[10px] text-slate-400 hover:text-white disabled:opacity-30 disabled:pointer-events-none transition-all"
-                          >
-                            {lang === "fr" ? "Suivant →" : "Next →"}
-                          </button>
-                        </div>
-
-                        {/* Quick Page Jumper Select */}
-                        <div className="flex items-center gap-2 text-[11px] text-slate-500">
-                          <span>{lang === "fr" ? "Aller à :" : "Jump to :"}</span>
-                          <select
-                            id="select-news-page-jump"
-                            value={newsPage}
-                            onChange={(e) => fetchNews(searchQuery, parseInt(e.target.value, 10))}
-                            className="bg-[#050505] border border-white/10 rounded-md px-1.5 py-1 text-[10.5px] text-slate-300 font-mono focus:outline-hidden cursor-pointer"
-                          >
-                            {Array.from({ length: 50 }, (_, idx) => idx + 1).map((p) => (
-                              <option key={p} value={p}>
-                                Page {p}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Additional empty space sponsor block for extra tourism discounts & ad revenue */}
-                  <div className="p-4 bg-emerald-500/5 border border-emerald-500/10 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-4 mb-4">
-                    <div className="flex items-center gap-3">
-                      <div className="p-2.5 bg-[#0d0d0d] border border-emerald-500/20 text-emerald-500 rounded-xl">
-                        <Megaphone className="w-5 h-5 animate-pulse" />
-                      </div>
-                      <div className="text-left">
-                        <h4 className="text-xs font-bold text-emerald-400 uppercase tracking-wide flex items-center gap-1.5">
-                          Sponsorisé • Terroir Occitan
-                        </h4>
-                        <p className="text-[11px] text-slate-400 mt-0.5">
-                          Bénéficiez de -15% de réduction immédiate sur toutes vos réservations d'activités locales et hébergements partenaires.
-                        </p>
-                      </div>
-                    </div>
-                    <span className="shrink-0 text-[10.5px] font-extrabold uppercase bg-emerald-500/15 text-emerald-400 px-3 py-1 rounded-lg border border-emerald-500/20">
-                      Code : TERROIR15
-                    </span>
-                  </div>
-
-                  {/* List of dynamic seasonal activities generated */}
+                  {/* Activités réelles, paginées */}
                   <div className="space-y-4">
                     {displayedActivities.length === 0 ? (
                       <div className="bg-[#0d0d0d] border border-white/10 rounded-2xl p-6 text-center text-slate-400">
                         <Info className="w-8 h-8 text-slate-600 mx-auto mb-2" />
-                        <p className="text-xs leading-relaxed font-semibold">{t.noActivitiesText}</p>
+                        <p className="text-xs leading-relaxed font-semibold">{d.noResults}</p>
                       </div>
                     ) : (
                       <>
-                        {displayedActivities.slice(0, 4).map((act) => (
+                        <div className="flex items-center justify-between text-[11px] font-bold text-slate-400 px-1">
+                          <span>{d.resultsCount(displayedActivities.length)}</span>
+                          {totalPages > 1 && (
+                            <span className="font-mono text-amber-500">
+                              {d.page(currentPage, totalPages)}
+                            </span>
+                          )}
+                        </div>
+
+                        {pagedActivities.map((act) => (
                           <ActivityCard
                             key={act.id}
                             activity={act}
                             isFavorite={favorites.includes(act.id)}
                             onToggleFavorite={() => handleToggleFavorite(act.id)}
-                            isPremium={isPremium}
                             biometricEnabled={biometricEnabled}
                             isBiometricAuthenticated={isBiometricAuthenticated}
                             onTriggerBiometric={() => handleTriggerBiometric(act.id)}
                             lang={lang}
-                            onOpenUpgradeModal={() => setUpgradeModalOpen(true)}
                             customNote={customNotes[act.id] || ""}
                             onSaveNote={(note) => handleSaveNote(act.id, note)}
                             onSchedule={(day) => handleScheduleActivity(act, day)}
-                            userCoords={userCoords}
+                            onShowOnMap={() => handleSelectActivityFromMap(act.id)}
                           />
                         ))}
-                        
-                        {/* Instant Quick back-to-top right after the 4 activities */}
-                        <div className="flex justify-center pt-2 pb-4">
-                          <button
-                            onClick={() => {
-                              listTopRef.current?.scrollTo({ top: 0, behavior: "smooth" });
-                            }}
-                            className="px-4 py-2 bg-amber-500/10 border border-amber-500/20 rounded-xl text-xs font-bold text-amber-500 hover:bg-amber-500/15 transition-all flex items-center gap-1.5"
-                          >
-                            <ChevronUp className="w-4 h-4 animate-bounce" />
-                            {lang === "fr" ? "Retour en haut de page ↑" : "Back to top ↑"}
-                          </button>
-                        </div>
 
-                        {/* Android Admob Simulated Banner Encart */}
-                        <div className="bg-[#050505] border border-white/10 rounded-2xl p-4 mt-6 text-center relative overflow-hidden flex flex-col items-center justify-center gap-1.5 min-h-[75px] shadow-inner animate-pulse hover:animate-none">
-                          <span className="absolute top-1.5 left-2 text-[8px] uppercase font-extrabold text-slate-500 bg-white/5 px-1.5 py-0.5 rounded font-mono">
-                            {lang === "fr" ? "Sponsor / Publicité" : "Sponsored Ads"}
-                          </span>
-                          <span className="absolute top-1.5 right-2 text-[8px] font-mono text-slate-600">
-                            AdMob-banner-bottom
-                          </span>
-                          <p className="text-[11px] font-extrabold text-amber-500/90 mt-2">
-                            {lang === "fr" ? `Cabanes & Hébergements insolites à ${getCleanLocalCity(searchQuery, searchCity)}` : `Unique Treehouses & Stays in ${getCleanLocalCity(searchQuery, searchCity)}`}
-                          </p>
-                          <p className="text-[9.5px] text-slate-400 max-w-md">
-                            {lang === "fr"
-                              ? `Profitez des meilleures promotions de vacances de plein air à ${getCleanLocalCity(searchQuery, searchCity)} et ses environs en partenariat avec l'Office de Tourisme local !`
-                              : `Enjoy exclusive offers on eco-cabins and cozy stays around ${getCleanLocalCity(searchQuery, searchCity)} in partnership with the local Tourism Office.`}
-                          </p>
-                          <a
-                            href={`https://www.google.com/search?q=${encodeURIComponent("hebergement insolite cabane bulle " + getCleanLocalCity(searchQuery, searchCity))}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-[9px] font-extrabold uppercase bg-amber-500/10 text-amber-400 px-2.5 py-0.5 rounded border border-amber-500/20 hover:bg-amber-500 hover:text-black transition-all"
-                          >
-                            {lang === "fr" ? `Rechercher à ${getCleanLocalCity(searchQuery, searchCity)}` : `Search in ${getCleanLocalCity(searchQuery, searchCity)}`}
-                          </a>
-                        </div>
+                        {/* Pagination */}
+                        {totalPages > 1 && (
+                          <div className="flex items-center justify-center gap-2 pt-2">
+                            <button
+                              onClick={() => {
+                                setActivityPage(Math.max(1, currentPage - 1));
+                                listTopRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+                              }}
+                              disabled={currentPage === 1}
+                              className="px-3 py-2 rounded-xl border border-white/10 bg-[#050505] text-[11px] font-bold text-slate-300 hover:text-white disabled:opacity-30 disabled:pointer-events-none transition-all"
+                            >
+                              ← {d.prev}
+                            </button>
+
+                            <span className="px-3 text-[11px] font-mono text-slate-400">
+                              {currentPage} / {totalPages}
+                            </span>
+
+                            <button
+                              onClick={() => {
+                                setActivityPage(Math.min(totalPages, currentPage + 1));
+                                listTopRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+                              }}
+                              disabled={currentPage === totalPages}
+                              className="px-3 py-2 rounded-xl border border-white/10 bg-[#050505] text-[11px] font-bold text-slate-300 hover:text-white disabled:opacity-30 disabled:pointer-events-none transition-all"
+                            >
+                              {d.next} →
+                            </button>
+                          </div>
+                        )}
+
+                        <p className="text-[10px] text-slate-500 text-center pt-1">
+                          {d.sourceNote}
+                        </p>
                       </>
                     )}
                   </div>
+
+                  {/* S'informer sur la région : liens sortants réels, placés
+                      sous les activités car purement informatifs. */}
+                  {searchCenter?.label && (
+                    <div className="bg-[#0d0d0d] border border-white/10 rounded-2xl p-5 space-y-3">
+                      <h4 className="text-xs font-bold uppercase tracking-widest text-slate-200">
+                        {lang === "fr"
+                          ? `S'informer sur ${searchCenter.label}`
+                          : `Local information: ${searchCenter.label}`}
+                      </h4>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                        {[
+                          {
+                            label: lang === "fr" ? "Office de tourisme" : "Tourist office",
+                            q: `office de tourisme ${searchCenter.label}`,
+                          },
+                          {
+                            label: lang === "fr" ? "Événements et agenda" : "Events and agenda",
+                            q: `agenda événements ${searchCenter.label}`,
+                          },
+                        ].map((item) => (
+                          <a
+                            key={item.label}
+                            href={`https://www.google.com/search?q=${encodeURIComponent(item.q)}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center justify-between gap-2 bg-[#050505] hover:bg-[#0c0c0c] border border-white/5 hover:border-amber-500/20 p-3.5 rounded-xl transition-all text-xs font-bold text-slate-300"
+                          >
+                            <span>{item.label}</span>
+                            <ExternalLink className="w-3.5 h-3.5 text-amber-500" />
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </>
               )}
             </div>
@@ -1550,46 +1441,18 @@ export default function App() {
                       activity={act}
                       isFavorite={true}
                       onToggleFavorite={() => handleToggleFavorite(act.id)}
-                      isPremium={isPremium}
                       biometricEnabled={biometricEnabled}
                       isBiometricAuthenticated={isBiometricAuthenticated}
                       onTriggerBiometric={() => handleTriggerBiometric(act.id)}
                       lang={lang}
-                      onOpenUpgradeModal={() => setUpgradeModalOpen(true)}
                       customNote={customNotes[act.id] || ""}
                       onSaveNote={(note) => handleSaveNote(act.id, note)}
                       onSchedule={(day) => handleScheduleActivity(act, day)}
-                      userCoords={userCoords}
                     />
                   ))}
                 </div>
               )}
 
-              {/* Favorites View Ad Banner */}
-              <div className="bg-[#050505] border border-white/10 rounded-2xl p-4 text-center relative overflow-hidden flex flex-col items-center justify-center gap-1.5 min-h-[75px] shadow-inner animate-pulse hover:animate-none">
-                <span className="absolute top-1.5 left-2 text-[8px] uppercase font-extrabold text-slate-500 bg-white/5 px-1.5 py-0.5 rounded font-mono">
-                  {lang === "fr" ? "Annonce Partenaire" : "Partner Banner"}
-                </span>
-                <span className="absolute top-1.5 right-2 text-[8px] font-mono text-slate-600">
-                  AdMob-banner-favorites
-                </span>
-                <p className="text-[11px] font-extrabold text-amber-500/90 mt-2">
-                  {lang === "fr" ? `Loisirs & Activités Outdoor à ${getCleanLocalCity(searchQuery, searchCity)}` : `Outdoor Adventure & Fun in ${getCleanLocalCity(searchQuery, searchCity)}`}
-                </p>
-                <p className="text-[9.5px] text-slate-400 max-w-md">
-                  {lang === "fr"
-                    ? `Profitez de réductions exclusives sur le kayak, l'escalade, le rafting et les parcs d'aventure à ${getCleanLocalCity(searchQuery, searchCity)} et ses environs.`
-                    : `Get discount passes for kayaking, rock climbing, rafting, and eco-tours in and around ${getCleanLocalCity(searchQuery, searchCity)}.`}
-                </p>
-                <a
-                  href={`https://www.google.com/search?q=${encodeURIComponent("loisir plein air kayak rafting escalade " + getCleanLocalCity(searchQuery, searchCity))}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-[9px] font-extrabold uppercase bg-amber-500/10 text-amber-400 px-2.5 py-0.5 rounded border border-amber-500/20 hover:bg-amber-500 hover:text-black transition-all"
-                >
-                  {lang === "fr" ? "Réclamer mon pass loisir" : "Get Adventure Pass"}
-                </a>
-              </div>
             </div>
           )}
 
@@ -2028,7 +1891,7 @@ export default function App() {
                   </p>
                   <ul className="list-disc pl-4 space-y-2 text-xs text-slate-400">
                     <li>
-                      <strong className="text-slate-200">Localisation éphémère :</strong> Les coordonnées géographiques transmises via le bouton de géolocalisation ou saisies dans les formulaires de recherche (ville, code postal, adresse) ne servent qu'à interroger les serveurs de cartographie Nominatim et l'API Gemini pour générer vos suggestions d'activités. Elles ne sont jamais stockées durablement.
+                      <strong className="text-slate-200">Localisation éphémère :</strong> Les coordonnées issues du bouton de géolocalisation, ou les lieux saisis dans les champs de recherche (ville, code postal, adresse), sont transmis à Photon (Komoot) pour être convertis en coordonnées, puis à l'API Overpass (OpenStreetMap) pour récupérer les activités réellement répertoriées autour de ce point. Ces requêtes ne contiennent pas votre identité et ne sont pas conservées par l'application.
                     </li>
                     <li>
                       <strong className="text-slate-200">Zéro cookie publicitaire ou pisteur caché :</strong> Nous n'utilisons aucun traceur tiers, pixel Facebook, Google Analytics ou autre outil de profilage de comportement. Votre navigation reste 100% anonyme.
@@ -2230,7 +2093,7 @@ export default function App() {
           }}
           onUpdateCoords={(coords) => {
             setUserCoords(coords);
-            fetchActivities(coords);
+            void loadActivitiesAt(coords.lat, coords.lng, null);
           }}
         />
 

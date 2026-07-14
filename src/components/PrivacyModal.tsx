@@ -64,8 +64,8 @@ export default function PrivacyModal({ isOpen, onClose, lang }: PrivacyModalProp
                 </h4>
                 <p>
                   {lang === "fr"
-                    ? "Toutes vos recherches géographiques (villes, codes postaux, adresses exactes) ne sont utilisées que temporairement pour interroger l'API de géolocalisation Nominatim et générer des activités via Gemini. Elles ne sont jamais conservées."
-                    : "All your location queries (cities, postal codes, exact addresses) are processed temporarily to query Nominatim and generate recommendations via Gemini. They are never kept."}
+                    ? "Vos recherches géographiques (position GPS, ville, code postal, adresse) sont transmises à deux services tiers, uniquement le temps d'afficher les résultats : Photon (Komoot) pour convertir un lieu en coordonnées, et l'API Overpass (OpenStreetMap) pour récupérer les activités environnantes. Ces requêtes contiennent la zone recherchée, jamais votre identité. Aucune de ces données n'est conservée par l'application sur un serveur."
+                    : "Your location searches (GPS position, city, postcode, address) are sent to two third-party services, only for as long as it takes to display results: Photon (Komoot) to turn a place into coordinates, and the Overpass API (OpenStreetMap) to retrieve nearby activities. These requests contain the searched area, never your identity. None of this data is stored by the application on a server."}
                 </p>
               </div>
 

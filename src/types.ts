@@ -2,29 +2,44 @@ export type Language = "fr" | "en" | "de" | "it" | "es";
 
 export type Season = "Spring" | "Summer" | "Autumn" | "Winter";
 
+export type ActivityCategory =
+  | "Nature"
+  | "Culture"
+  | "Gastronomy"
+  | "Sport"
+  | "Relaxation";
+
+/**
+ * Une activite reelle, issue d'OpenStreetMap.
+ *
+ * Tous les champs optionnels le sont parce qu'OSM ne les renseigne pas
+ * systematiquement. Un champ absent doit rester absent a l'affichage :
+ * il ne doit jamais etre remplace par une valeur inventee.
+ */
 export interface Activity {
   id: string;
   name: string;
-  category: string;
+  category: ActivityCategory;
   icon: string;
-  description: string;
-  bestPeriod: string;
-  price: string;
-  bookingUrl: string;
-  comparison: string;
-  googleReviews: {
-    rating: number;
-    count: number;
-    recentReview: string;
-    reviewsList?: Array<{ author: string; rating: number; text: string }>;
-  };
-  phone: string;
-  email: string;
+  /** Ce que le lieu EST, deduit des tags OSM : "Musée", "Château", "Cascade". */
+  typeLabel: string;
   lat: number;
   lng: number;
-  latOffset?: number;
-  lngOffset?: number;
+  /** Distance reelle depuis le point de recherche, en kilometres. */
+  distanceKm: number;
+  /** Tarification, uniquement si OSM la renseigne. */
+  fee: "free" | "paid" | "unknown";
+  charge?: string;
   website?: string;
+  phone?: string;
+  email?: string;
+  openingHours?: string;
+  address?: string;
+  wheelchair?: string;
+  /** Fiche du lieu sur OpenStreetMap (source verifiable). */
+  osmUrl: string;
+  /** Recherche Google Maps du lieu : y consulter les vrais avis. */
+  mapsUrl: string;
 }
 
 export interface PushNotification {
@@ -485,5 +500,167 @@ export const LOCALIZATION: { [key in Language]: LocalizationDictionary } = {
     freeTierLabel: "Cuenta Gratuita",
     premiumTierLabel: "Miembro Premium",
     syncDeviceSuccess: "¡Dispositivos sincronizados con éxito!"
+  }
+};
+
+// ── Libellés liés aux données réelles OpenStreetMap ───────────────────
+
+export interface DataLabels {
+  loadingActivities: string;
+  locating: string;
+  resultsCount: (n: number) => string;
+  noResults: string;
+  offline: string;
+  placeNotFound: string;
+  feeLabel: string;
+  feeFree: string;
+  feePaid: string;
+  feeUnknown: string;
+  feeAll: string;
+  openingHours: string;
+  address: string;
+  officialWebsite: string;
+  viewReviews: string;
+  viewOnMap: string;
+  source: string;
+  sourceNote: string;
+  distanceFrom: string;
+  page: (cur: number, total: number) => string;
+  prev: string;
+  next: string;
+  retry: string;
+  seasonSortNote: string;
+}
+
+export const DATA_LABELS: { [key in Language]: DataLabels } = {
+  fr: {
+    loadingActivities: "Recherche des activités réelles autour de ce point...",
+    locating: "Localisation précise en cours...",
+    resultsCount: (n) => `${n} activité${n > 1 ? "s" : ""} trouvée${n > 1 ? "s" : ""}`,
+    noResults: "Aucune activité répertoriée dans ce rayon. Essayez d'élargir la recherche.",
+    offline: "Pas de connexion. Les activités sont chargées en direct depuis OpenStreetMap : reconnectez-vous pour les afficher.",
+    placeNotFound: "Lieu introuvable. Vérifiez l'orthographe de la ville ou du code postal.",
+    feeLabel: "Tarif",
+    feeFree: "Gratuit",
+    feePaid: "Payant",
+    feeUnknown: "Tarif non renseigné",
+    feeAll: "Tous",
+    openingHours: "Horaires",
+    address: "Adresse",
+    officialWebsite: "Site officiel",
+    viewReviews: "Voir les avis sur Google Maps",
+    viewOnMap: "Voir sur la carte",
+    source: "Source",
+    sourceNote: "Données issues d'OpenStreetMap. Les informations non renseignées par OSM ne sont pas affichées.",
+    distanceFrom: "de votre point de recherche",
+    page: (cur, total) => `Page ${cur} sur ${total}`,
+    prev: "Précédent",
+    next: "Suivant",
+    retry: "Réessayer",
+    seasonSortNote: "La saison ordonne les suggestions ; elle ne filtre pas les lieux."
+  },
+  en: {
+    loadingActivities: "Searching for real activities around this point...",
+    locating: "Getting your precise location...",
+    resultsCount: (n) => `${n} activit${n > 1 ? "ies" : "y"} found`,
+    noResults: "No activity listed within this radius. Try widening the search.",
+    offline: "No connection. Activities are loaded live from OpenStreetMap: reconnect to display them.",
+    placeNotFound: "Place not found. Check the spelling of the city or postcode.",
+    feeLabel: "Fee",
+    feeFree: "Free",
+    feePaid: "Paid",
+    feeUnknown: "Fee not specified",
+    feeAll: "All",
+    openingHours: "Opening hours",
+    address: "Address",
+    officialWebsite: "Official website",
+    viewReviews: "See reviews on Google Maps",
+    viewOnMap: "Show on map",
+    source: "Source",
+    sourceNote: "Data from OpenStreetMap. Information not provided by OSM is not displayed.",
+    distanceFrom: "from your search point",
+    page: (cur, total) => `Page ${cur} of ${total}`,
+    prev: "Previous",
+    next: "Next",
+    retry: "Retry",
+    seasonSortNote: "The season orders the suggestions; it does not filter places."
+  },
+  de: {
+    loadingActivities: "Suche nach echten Aktivitäten in der Umgebung...",
+    locating: "Genaue Position wird ermittelt...",
+    resultsCount: (n) => `${n} Aktivität${n > 1 ? "en" : ""} gefunden`,
+    noResults: "Keine Aktivität in diesem Umkreis erfasst. Erweitern Sie die Suche.",
+    offline: "Keine Verbindung. Aktivitäten werden live von OpenStreetMap geladen: bitte erneut verbinden.",
+    placeNotFound: "Ort nicht gefunden. Prüfen Sie die Schreibweise oder die Postleitzahl.",
+    feeLabel: "Preis",
+    feeFree: "Kostenlos",
+    feePaid: "Kostenpflichtig",
+    feeUnknown: "Preis nicht angegeben",
+    feeAll: "Alle",
+    openingHours: "Öffnungszeiten",
+    address: "Adresse",
+    officialWebsite: "Offizielle Website",
+    viewReviews: "Bewertungen auf Google Maps ansehen",
+    viewOnMap: "Auf der Karte zeigen",
+    source: "Quelle",
+    sourceNote: "Daten von OpenStreetMap. Nicht erfasste Angaben werden nicht angezeigt.",
+    distanceFrom: "von Ihrem Suchpunkt",
+    page: (cur, total) => `Seite ${cur} von ${total}`,
+    prev: "Zurück",
+    next: "Weiter",
+    retry: "Erneut versuchen",
+    seasonSortNote: "Die Jahreszeit ordnet die Vorschläge; sie filtert die Orte nicht."
+  },
+  it: {
+    loadingActivities: "Ricerca di attività reali intorno a questo punto...",
+    locating: "Localizzazione precisa in corso...",
+    resultsCount: (n) => `${n} attività trovat${n > 1 ? "e" : "a"}`,
+    noResults: "Nessuna attività registrata in questo raggio. Prova ad ampliare la ricerca.",
+    offline: "Nessuna connessione. Le attività sono caricate in diretta da OpenStreetMap: riconnettiti per visualizzarle.",
+    placeNotFound: "Luogo non trovato. Controlla l'ortografia della città o il codice postale.",
+    feeLabel: "Tariffa",
+    feeFree: "Gratuito",
+    feePaid: "A pagamento",
+    feeUnknown: "Tariffa non indicata",
+    feeAll: "Tutti",
+    openingHours: "Orari",
+    address: "Indirizzo",
+    officialWebsite: "Sito ufficiale",
+    viewReviews: "Vedi le recensioni su Google Maps",
+    viewOnMap: "Mostra sulla mappa",
+    source: "Fonte",
+    sourceNote: "Dati da OpenStreetMap. Le informazioni non presenti in OSM non vengono mostrate.",
+    distanceFrom: "dal tuo punto di ricerca",
+    page: (cur, total) => `Pagina ${cur} di ${total}`,
+    prev: "Precedente",
+    next: "Successivo",
+    retry: "Riprova",
+    seasonSortNote: "La stagione ordina i suggerimenti; non filtra i luoghi."
+  },
+  es: {
+    loadingActivities: "Buscando actividades reales alrededor de este punto...",
+    locating: "Obteniendo su ubicación precisa...",
+    resultsCount: (n) => `${n} actividad${n > 1 ? "es" : ""} encontrada${n > 1 ? "s" : ""}`,
+    noResults: "Ninguna actividad registrada en este radio. Pruebe a ampliar la búsqueda.",
+    offline: "Sin conexión. Las actividades se cargan en directo desde OpenStreetMap: vuelva a conectarse.",
+    placeNotFound: "Lugar no encontrado. Compruebe la ortografía de la ciudad o el código postal.",
+    feeLabel: "Tarifa",
+    feeFree: "Gratuito",
+    feePaid: "De pago",
+    feeUnknown: "Tarifa no indicada",
+    feeAll: "Todos",
+    openingHours: "Horario",
+    address: "Dirección",
+    officialWebsite: "Sitio oficial",
+    viewReviews: "Ver las opiniones en Google Maps",
+    viewOnMap: "Ver en el mapa",
+    source: "Fuente",
+    sourceNote: "Datos de OpenStreetMap. La información no indicada en OSM no se muestra.",
+    distanceFrom: "de su punto de búsqueda",
+    page: (cur, total) => `Página ${cur} de ${total}`,
+    prev: "Anterior",
+    next: "Siguiente",
+    retry: "Reintentar",
+    seasonSortNote: "La estación ordena las sugerencias; no filtra los lugares."
   }
 };
