@@ -238,4 +238,6 @@ La géolocalisation n'est activée qu'après accord explicite de l'utilisateur e
 
 ## Licence
 
-Aucune licence n'est actuellement définie pour ce dépôt.
+**Tous droits réservés.** Ce projet n'est pas un logiciel libre.
+
+Le code est publié à des fins de consultation, d'évaluation et de démonstration. Toute reproduction, modification, redistribution ou exploitation, commerciale ou non, est interdite sans autorisation écrite préalable de l'auteur. Voir le fichier [LICENSE](LICENSE).
