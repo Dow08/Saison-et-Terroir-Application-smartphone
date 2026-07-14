@@ -36,7 +36,7 @@ import {
 import { Language, Season, Activity, ActivityCategory, PushNotification, LOCALIZATION, DATA_LABELS } from "./types";
 import { getDefaultNotifications, FALLBACK_BUILD_INFO } from "./data/fallbackData";
 import { geocode, reverseGeocode, NetworkError, NotFoundError } from "./services/geocoding";
-import { fetchActivities as fetchOsmActivities } from "./services/overpass";
+import { fetchActivities as fetchOsmActivities, distanceKm } from "./services/overpass";
 import ActivityCard from "./components/ActivityCard";
 import BiometricModal from "./components/BiometricModal";
 import PremiumModal from "./components/PremiumModal";
@@ -96,6 +96,11 @@ export default function App() {
   const [isPremium, setIsPremium] = useState<boolean>(() => localStorage.getItem("is_premium") !== "false");
   const [biometricEnabled, setBiometricEnabled] = useState<boolean>(() => localStorage.getItem("biometric_enabled") === "true");
   const [isBiometricAuthenticated, setIsBiometricAuthenticated] = useState<boolean>(false);
+  // Fiches completes des favoris, conservees sur l'appareil : sans elles, un
+  // favori disparaitrait des que l'utilisateur change de ville de recherche.
+  const [favoriteActivities, setFavoriteActivities] = useState<{ [id: string]: Activity }>(() => {
+    try { const s = localStorage.getItem("favorite_activities"); return s ? JSON.parse(s) : {}; } catch { return {}; }
+  });
   const [favorites, setFavorites] = useState<string[]>(() => {
     try { const s = localStorage.getItem("favorites"); return s ? JSON.parse(s) : []; } catch { return []; }
   });
@@ -306,16 +311,31 @@ export default function App() {
     }
   };
 
-  // Toggle favorite trigger
-  const handleToggleFavorite = (actId: string) => {
-    let updated: string[];
-    if (favorites.includes(actId)) {
-      updated = favorites.filter((id) => id !== actId);
+  /**
+   * Mise en favori.
+   *
+   * La fiche complete est conservee, pas seulement son identifiant : les
+   * activites proviennent desormais d'OpenStreetMap et ne sont connues que le
+   * temps d'une recherche. Ne stocker que l'identifiant faisait disparaitre le
+   * favori des que l'utilisateur cherchait une autre ville.
+   */
+  const handleToggleFavorite = (act: Activity) => {
+    const isFav = favorites.includes(act.id);
+    const updatedIds = isFav
+      ? favorites.filter((id) => id !== act.id)
+      : [...favorites, act.id];
+
+    const updatedActivities = { ...favoriteActivities };
+    if (isFav) {
+      delete updatedActivities[act.id];
     } else {
-      updated = [...favorites, actId];
+      updatedActivities[act.id] = act;
     }
-    setFavorites(updated);
-    syncSaveCloudData({ favorites: updated });
+
+    setFavorites(updatedIds);
+    setFavoriteActivities(updatedActivities);
+    localStorage.setItem("favorite_activities", JSON.stringify(updatedActivities));
+    syncSaveCloudData({ favorites: updatedIds });
   };
 
   // Save private note memo
@@ -616,7 +636,21 @@ export default function App() {
     );
   };
 
-  const filteredFavoriteActivities = activities.filter((act) => favorites.includes(act.id));
+  // Les favoris sont lus depuis les fiches conservees sur l'appareil, et non
+  // depuis le resultat de recherche courant : ils restent donc accessibles
+  // quelle que soit la ville affichee.
+  //
+  // La distance est recalculee depuis la position actuelle : celle enregistree
+  // au moment de la mise en favori se rapportait au point de recherche d'alors
+  // et serait trompeuse une fois l'utilisateur ailleurs.
+  const filteredFavoriteActivities = favorites
+    .map((id) => favoriteActivities[id])
+    .filter((act): act is Activity => Boolean(act))
+    .map((act) =>
+      userCoords
+        ? { ...act, distanceKm: distanceKm(userCoords.lat, userCoords.lng, act.lat, act.lng) }
+        : act
+    );
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-[#050505] flex flex-col md:py-8 md:px-4 items-center justify-center transition-colors duration-200 text-slate-800 dark:text-slate-100 font-sans">
@@ -1332,7 +1366,7 @@ export default function App() {
                             key={act.id}
                             activity={act}
                             isFavorite={favorites.includes(act.id)}
-                            onToggleFavorite={() => handleToggleFavorite(act.id)}
+                            onToggleFavorite={() => handleToggleFavorite(act)}
                             biometricEnabled={biometricEnabled}
                             isBiometricAuthenticated={isBiometricAuthenticated}
                             onTriggerBiometric={() => handleTriggerBiometric(act.id)}
@@ -1440,7 +1474,7 @@ export default function App() {
                       key={act.id}
                       activity={act}
                       isFavorite={true}
-                      onToggleFavorite={() => handleToggleFavorite(act.id)}
+                      onToggleFavorite={() => handleToggleFavorite(act)}
                       biometricEnabled={biometricEnabled}
                       isBiometricAuthenticated={isBiometricAuthenticated}
                       onTriggerBiometric={() => handleTriggerBiometric(act.id)}
