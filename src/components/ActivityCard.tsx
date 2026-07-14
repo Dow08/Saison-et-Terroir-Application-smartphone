@@ -93,6 +93,25 @@ export default function ActivityCard({
         </span>
       );
     }
+    // OpenStreetMap ne renseigne le tarif que pour une minorite de lieux, et
+    // pratiquement jamais le montant. Quand le site officiel existe, on y
+    // renvoie directement : c'est la que le tarif se trouve reellement.
+    if (activity.website) {
+      return (
+        <a
+          href={activity.website}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          className="inline-flex items-center gap-1 px-2 py-0.5 bg-slate-500/10 hover:bg-amber-500/15 text-slate-500 dark:text-slate-400 hover:text-amber-600 dark:hover:text-amber-400 text-[10px] font-medium rounded-md border border-slate-500/20 transition-colors"
+        >
+          <Icons.Ticket className="w-3 h-3" />
+          {d.feeOnSite}
+          <Icons.ExternalLink className="w-2.5 h-2.5" />
+        </a>
+      );
+    }
+
     return (
       <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-slate-500/10 text-slate-500 dark:text-slate-400 text-[10px] font-medium rounded-md border border-slate-500/20">
         <Icons.HelpCircle className="w-3 h-3" />

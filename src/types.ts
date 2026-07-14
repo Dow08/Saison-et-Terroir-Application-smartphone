@@ -516,6 +516,7 @@ export interface DataLabels {
   feeFree: string;
   feePaid: string;
   feeUnknown: string;
+  feeOnSite: string;
   feeAll: string;
   openingHours: string;
   address: string;
@@ -550,6 +551,7 @@ export const DATA_LABELS: { [key in Language]: DataLabels } = {
     feeFree: "Gratuit",
     feePaid: "Payant",
     feeUnknown: "Tarif non renseigné",
+    feeOnSite: "Tarif sur le site officiel",
     feeAll: "Tous",
     openingHours: "Horaires",
     address: "Adresse",
@@ -582,6 +584,7 @@ export const DATA_LABELS: { [key in Language]: DataLabels } = {
     feeFree: "Free",
     feePaid: "Paid",
     feeUnknown: "Fee not specified",
+    feeOnSite: "Fee on official site",
     feeAll: "All",
     openingHours: "Opening hours",
     address: "Address",
@@ -614,6 +617,7 @@ export const DATA_LABELS: { [key in Language]: DataLabels } = {
     feeFree: "Kostenlos",
     feePaid: "Kostenpflichtig",
     feeUnknown: "Preis nicht angegeben",
+    feeOnSite: "Preis auf der offiziellen Website",
     feeAll: "Alle",
     openingHours: "Öffnungszeiten",
     address: "Adresse",
@@ -646,6 +650,7 @@ export const DATA_LABELS: { [key in Language]: DataLabels } = {
     feeFree: "Gratuito",
     feePaid: "A pagamento",
     feeUnknown: "Tariffa non indicata",
+    feeOnSite: "Tariffa sul sito ufficiale",
     feeAll: "Tutti",
     openingHours: "Orari",
     address: "Indirizzo",
@@ -678,6 +683,7 @@ export const DATA_LABELS: { [key in Language]: DataLabels } = {
     feeFree: "Gratuito",
     feePaid: "De pago",
     feeUnknown: "Tarifa no indicada",
+    feeOnSite: "Tarifa en el sitio oficial",
     feeAll: "Todos",
     openingHours: "Horario",
     address: "Dirección",
