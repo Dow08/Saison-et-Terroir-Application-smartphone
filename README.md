@@ -45,6 +45,8 @@ L'application est disponible en cinq langues (français, anglais, allemand, ital
 ### Fiches d'activité
 
 Chaque activité affiche son nom, sa catégorie, sa description, sa période idéale, son tarif indicatif, un comparatif, ainsi que sa note Google, le nombre d'avis et un extrait d'avis récent. Un lien de réservation, un numéro de téléphone et une adresse e-mail sont proposés pour le contact direct.
+<img width="650" height="540" alt="image" src="https://github.com/user-attachments/assets/43fb5c4a-4059-40f0-b5c0-58d4815c40bc" />
+
 
 ### Carte interactive
 
@@ -66,6 +68,9 @@ Les activités trouvées sont affichées sous forme de marqueurs sur une carte. 
 ### Actualités locales
 
 Fil d'actualité régional filtré par lieu, saison et langue, avec pagination. Chaque entrée affiche un titre, un résumé, une catégorie, une date de publication et un lien vers la source.
+
+<img width="648" height="430" alt="image" src="https://github.com/user-attachments/assets/7682b90d-2a21-4dce-9c3b-d7dfdaa79ec4" />
+
 
 ### Compte et synchronisation
 
