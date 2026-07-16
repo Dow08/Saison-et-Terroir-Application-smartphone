@@ -38,13 +38,13 @@ L'application n'a **ni serveur, ni base de données, ni clé API**. Elle interro
 
 La position de l'utilisateur sert de biais au géocodage. Sans elle, une saisie comme `31000` est ambiguë à l'échelle mondiale et peut renvoyer un homonyme à l'autre bout de la planète.
 
-### Connexion requise
+#### Connexion requise
 
 **L'application a besoin d'une connexion Internet.** C'est un choix assumé : plutôt que d'afficher des activités de démonstration qui donneraient l'illusion d'un résultat, elle affiche un message explicite invitant à se reconnecter. Aucune donnée n'est inventée pour combler une absence de réseau.
 
 Les favoris, en revanche, sont conservés en entier sur l'appareil et restent consultables hors connexion.
 
-### Limites d'usage
+#### Limites d'usage
 
 Les instances publiques d'Overpass appliquent une limitation de débit. Elles conviennent à un usage personnel ou à une diffusion restreinte. Une adoption à grande échelle imposerait d'héberger sa propre instance ou de passer par un fournisseur.
 
@@ -54,7 +54,7 @@ Les instances publiques d'Overpass appliquent une limitation de débit. Elles co
 
 ## Fonctionnalités
 
-### Recherche et localisation
+#### Recherche et localisation
 
 Au démarrage, l'application localise l'utilisateur avec la meilleure précision possible, identifie sa commune, puis charge les activités réellement répertoriées autour de lui.
 
@@ -62,7 +62,7 @@ Il est ensuite possible de rechercher n'importe quel autre lieu dans le monde, p
 
 Le rayon de recherche est réglable de 5 à 100 km.
 
-### Activités
+#### Activités
 
 Chaque fiche affiche **uniquement ce qu'OpenStreetMap contient réellement** :
 
@@ -77,25 +77,25 @@ Un champ absent d'OpenStreetMap n'est pas affiché. Aucune valeur n'est inventé
 
 Les résultats peuvent être nombreux (plusieurs centaines en zone urbaine) : ils sont triés par distance et paginés.
 
-### Filtres
+#### Filtres
 
 - **Tarif** : gratuit, payant, ou tous. Ce filtre s'appuie sur les tags OpenStreetMap, pas sur une estimation.
 - **Catégorie** : Nature, Culture, Gastronomie, Sport, Bien-être.
 - **Saison** : la saison **réordonne** les suggestions (l'extérieur remonte en été, l'intérieur en hiver). Elle ne filtre pas les lieux, OpenStreetMap ne connaissant pas leur saisonnalité.
 
-### Carte interactive
+#### Carte interactive
 
 Les activités trouvées apparaissent sous forme de marqueurs. Cliquer sur un marqueur fait défiler la page jusqu'à la fiche correspondante.
 
-### Favoris et notes privées
+#### Favoris et notes privées
 
 Mise en favori par activité, et rédaction d'une note personnelle, protégeable par un verrouillage biométrique. La fiche complète du favori est conservée sur l'appareil : elle reste accessible même après un changement de ville ou hors connexion, et sa distance est recalculée depuis la position courante.
 
-### Agenda et export calendrier
+#### Agenda et export calendrier
 
 Calendrier interactif avec planification d'une activité par jour, indicateur météo et alerte en cas de conditions défavorables à une sortie en plein air. Export au format ICS, jour par jour ou pour le mois complet, importable dans l'agenda du téléphone.
 
-### Compte
+#### Compte
 
 Onboarding au premier lancement (pseudonyme et autorisation de position), centre de notifications, informations légales et RGPD, formulaire de support.
 
@@ -168,13 +168,13 @@ cd android
 
 L'APK signé est produit dans `android/app/build/outputs/apk/release/`.
 
-### Signature
+#### Signature
 
 La signature de release est lue depuis `android/keystore.properties`, qui référence un keystore. **Ces deux fichiers ne sont pas versionnés et ne doivent jamais l'être** : ils contiennent la clé de signature et ses mots de passe. Leur perte rend impossible toute mise à jour signée de l'application.
 
 Pour publier une mise à jour, incrémentez `versionCode` et `versionName` dans `android/app/build.gradle`.
 
-### Vérifier les permissions dans l'APK compilé
+#### Vérifier les permissions dans l'APK compilé
 
 ```bash
 aapt dump badging android/app/build/outputs/apk/release/app-release.apk | grep uses-permission
